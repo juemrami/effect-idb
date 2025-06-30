@@ -25,6 +25,7 @@
     "url": "https://github.com/juemrami/effect-idb"
   },
   "devDependencies": {
+    "fake-indexeddb": "^6.0.1",
     "@babel/cli": "^7.24.8",
     "@babel/core": "^7.25.2",
     "@babel/plugin-transform-export-namespace-from": "^7.24.7",

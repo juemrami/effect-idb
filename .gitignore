@@ -6,6 +6,7 @@ tmp/
 dist/
 build/
 docs/
+/scratchpad
 !scratchpad/tsconfig.json
 .direnv/
 .idea/
@@ -17,3 +18,4 @@ docs/
 .vscode
 !.vscode/settings.json
 .github
+.jj

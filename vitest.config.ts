@@ -3,6 +3,11 @@ import { defineConfig } from "vitest/config"
 
 export default defineConfig({
   plugins: [],
+  server: {
+    watch: {
+      ignored: ["**/.jj/**"]
+    }
+  },
   test: {
     setupFiles: [path.join(__dirname, "setupTests.ts")],
     include: ["./test/**/*.test.ts"],
