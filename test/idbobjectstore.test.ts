@@ -61,15 +61,16 @@ describe("IDBObjectStore Integration", () => {
     const runtime = createDatabaseTestRuntime({
       name: "testDB",
       version: 1,
-      // @ts-ignore
       onUpgrade(db) {
-        return Effect.gen(function*() {
-          yield* db.createObjectStore(
-            ContactObjectStoreConfig.name,
-            ContactObjectStoreConfig.params,
-            ContactObjectStoreConfig.indexes
-          )
-        })
+        return {
+          1: Effect.gen(function*() {
+            yield* db.createObjectStore(
+              ContactObjectStoreConfig.name,
+              ContactObjectStoreConfig.params,
+              ContactObjectStoreConfig.indexes
+            )
+          })
+        }
       }
     })
     // Test contact data
@@ -132,21 +133,22 @@ describe("IDBObjectStore Integration", () => {
     const runtime = createDatabaseTestRuntime({
       name: "batchTestDB",
       version: 1,
-      // @ts-ignore
       onUpgrade(db) {
-        return Effect.gen(function*() {
-          // Create both object stores
-          yield* db.createObjectStore(
-            ContactObjectStoreConfig.name,
-            ContactObjectStoreConfig.params,
-            ContactObjectStoreConfig.indexes
-          )
-          yield* db.createObjectStore(
-            NotesObjectStoreConfig.name,
-            NotesObjectStoreConfig.params,
-            NotesObjectStoreConfig.indexes
-          )
-        })
+        return {
+          1: Effect.gen(function*() {
+            // Create both object stores
+            yield* db.createObjectStore(
+              ContactObjectStoreConfig.name,
+              ContactObjectStoreConfig.params,
+              ContactObjectStoreConfig.indexes
+            )
+            yield* db.createObjectStore(
+              NotesObjectStoreConfig.name,
+              NotesObjectStoreConfig.params,
+              NotesObjectStoreConfig.indexes
+            )
+          })
+        }
       }
     })
 
@@ -221,22 +223,21 @@ describe("IDBObjectStore Integration", () => {
     const config: IDBDatabaseConfig = {
       name: "testDB",
       version: 1,
-      onUpgrade: (upgradeService, info) =>
-        Effect.gen(function*() {
+      onUpgrade: (upgradeService) => ({
+        1: Effect.gen(function*() {
           // Create contacts object store if it doesn't exist
-          if (info.newVersion === 1) {
-            yield* upgradeService.createObjectStore(
-              ContactObjectStoreConfig.name,
-              ContactObjectStoreConfig.params,
-              ContactObjectStoreConfig.indexes
-            )
-            yield* upgradeService.createObjectStore(
-              NotesObjectStoreConfig.name,
-              NotesObjectStoreConfig.params,
-              NotesObjectStoreConfig.indexes
-            )
-          }
+          yield* upgradeService.createObjectStore(
+            ContactObjectStoreConfig.name,
+            ContactObjectStoreConfig.params,
+            ContactObjectStoreConfig.indexes
+          )
+          yield* upgradeService.createObjectStore(
+            NotesObjectStoreConfig.name,
+            NotesObjectStoreConfig.params,
+            NotesObjectStoreConfig.indexes
+          )
         })
+      })
     }
     const dbRuntime = createDatabaseTestRuntime(config)
     const putTransaction = Effect.gen(function*() {
@@ -310,31 +311,29 @@ describe("IDBObjectStore Integration", () => {
     const runtime1 = createDatabaseTestRuntime({
       name: `${testDbName}-1`,
       version: 1,
-      onUpgrade: (upgradeService, info) =>
-        Effect.gen(function*() {
-          if (info.newVersion === 1) {
-            yield* upgradeService.createObjectStore(
-              ContactObjectStoreConfig.name,
-              ContactObjectStoreConfig.params,
-              ContactObjectStoreConfig.indexes
-            )
-          }
+      onUpgrade: (upgradeService) => ({
+        1: Effect.gen(function*() {
+          yield* upgradeService.createObjectStore(
+            ContactObjectStoreConfig.name,
+            ContactObjectStoreConfig.params,
+            ContactObjectStoreConfig.indexes
+          )
         })
+      })
     })
 
     const runtime2 = createDatabaseTestRuntime({
       name: `${testDbName}-2`,
       version: 1,
-      onUpgrade: (upgradeService, info) =>
-        Effect.gen(function*() {
-          if (info.newVersion === 1) {
-            yield* upgradeService.createObjectStore(
-              NotesObjectStoreConfig.name,
-              NotesObjectStoreConfig.params,
-              NotesObjectStoreConfig.indexes
-            )
-          }
+      onUpgrade: (upgradeService) => ({
+        1: Effect.gen(function*() {
+          yield* upgradeService.createObjectStore(
+            NotesObjectStoreConfig.name,
+            NotesObjectStoreConfig.params,
+            NotesObjectStoreConfig.indexes
+          )
         })
+      })
     })
 
     // Test data for both databases

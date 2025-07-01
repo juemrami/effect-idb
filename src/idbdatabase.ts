@@ -1,6 +1,6 @@
 import { Context, Data, Effect, Fiber, Layer, pipe } from "effect"
 import { indexedDB as testIndexedDB } from "fake-indexeddb"
-import type { IDBObjectStoreIndexParams } from "./idbobjectstore.js"
+import type { IDBObjectStoreConfig, IDBObjectStoreIndexParams } from "./idbobjectstore.js"
 
 export class IDBFactoryImplementation extends Context.Tag("IDBFactory")<IDBFactoryImplementation, IDBFactory>() {
   static readonly live = Layer.sync(IDBFactoryImplementation, () => window.indexedDB)
@@ -133,10 +133,8 @@ type DBServiceShape = ReturnType<typeof createServiceFromDB>
 export type IDBDatabaseConfig = {
   name: string
   version?: number // defaults to `1` if db doesnt already exist
-  onUpgrade?: (db: DBServiceShape, info: {
-    oldVersion: number
-    newVersion: number | null // null on first open for a database
-  }) => Effect.Effect<unknown, unknown, never>
+  objectStores?: Array<IDBObjectStoreConfig>
+  onUpgrade?: (db: DBServiceShape) => Record<number, Effect.Effect<any, any, never>>
 }
 export class IDBDatabaseService extends Context.Tag("IDBDatabaseService")<IDBDatabaseService, DBServiceShape>() {
   static make = (config: IDBDatabaseConfig) =>
@@ -144,7 +142,7 @@ export class IDBDatabaseService extends Context.Tag("IDBDatabaseService")<IDBDat
       IDBDatabaseService,
       Effect.gen(function*() {
         const dbFactory = yield* IDBFactoryService
-        const db = Effect.acquireRelease(
+        const db = yield* Effect.acquireRelease(
           dbFactory.open(config),
           // `close` is automatically handled by the browser on page unload
           // only times we'd want to explicitly close is when we want to because of:
@@ -153,13 +151,12 @@ export class IDBDatabaseService extends Context.Tag("IDBDatabaseService")<IDBDat
           //  - or db deletions (new db connections cant upgrade till old ones are closed)
           (db) =>
             Effect.sync(() => {
-              console.log("closing db connection", db.name)
+              // console.log("closing db connection", db.name)
               db.close()
             })
         )
-        console.log("creating db service", config)
-        const dbInstance = yield* db
-        return createServiceFromDB(dbInstance)
+        // console.log("creating db service", config)
+        return createServiceFromDB(db)
       })
     )
   static makeLive = (config: IDBDatabaseConfig) =>
@@ -209,32 +206,36 @@ export class IDBFactoryService extends Context.Tag("IDBFactoryService")<
               /**
                * Notes:
                *  - `.open` request will hang when attempting to open a new version, while db is being use in other tabs.
-               *      - to work around, the 'versionchange' event can be listened for and one can abort any live txns
-               *  - `
+               *    - to work around, the 'versionchange' event can be listened for and one can abort any live txns
+               *  - `.onerror` event will fire for any event error that isn't caught in the lifetime of the db connection.
+               *    - this includes error from deeper events like object store operation requests.
                */
-
-              // upgrade needed handler fired on first (lifetime) db opens
-              // or a when new version is passed to `open`
+              // upgrade needed handler fired on first (lifetime) db opens or a when new version is passed to `open`
               let upgradeFiber: Fiber.RuntimeFiber<any, any> | null = null
               request.onupgradeneeded = (event) => {
                 // Handle database upgrade logic here if needed
-                // I want upgrade logic to be declared in the same config for the IDBDatabaseService
-                // i also want access to all objectStores (as services?)
-                // that currently exist in the database
                 if (config.onUpgrade === undefined) return
+                if (event.newVersion === null) {
+                  //  this means the database is being deleted.
+                  return
+                }
                 // Because we are bound by this async handler system that lives in JS world
                 // not sure how to re-pop back into Effect world to execute any effects
-                // for the upgrade logic
+                // for the upgrade logic, besides to runFork it
                 const dbConnection = (event.target! as IDBOpenDBRequest).result
-                const upgradeEffect = config.onUpgrade(
-                  createServiceFromDB(dbConnection),
-                  {
-                    oldVersion: event.oldVersion,
-                    newVersion: event.newVersion
-                  }
-                )
-                // Run upgrade effect in background - services should be provided in the effect definition
-                upgradeFiber = Effect.runFork(upgradeEffect)
+                const dbService = createServiceFromDB(dbConnection)
+                const startVersion = event.oldVersion + 1
+                const endVersion = dbConnection.version
+
+                // Create ordered effects for each version, calling onUpgrade with correct version info
+                const migrationEffects = config.onUpgrade(dbService)
+                const orderedMigrations = []
+                for (let version = startVersion; version <= endVersion; version++) {
+                  if (migrationEffects[version]) orderedMigrations.push(migrationEffects[version])
+                }
+                // run the upgrade effect in a fiber. DO NOT run them concurrently
+                // todo: make sure that errors within a upgrade/migration can be rolled back without losing data
+                upgradeFiber = Effect.runFork(Effect.all(orderedMigrations))
               }
               request.onerror = () => {
                 // interrupt any upgrades (not sure if this is needed)

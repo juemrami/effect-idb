@@ -192,17 +192,24 @@ describe("Effect IndexedDB - Runtime and Database Connection", () => {
 
       const config: IDBDatabaseConfig = {
         name: `${testDbName}-upgrade`,
-        version: 1,
-        onUpgrade: (db, info) =>
-          Effect.gen(function*() {
+        version: 3,
+        onUpgrade: (db) => ({
+          1: Effect.gen(function*() {
             upgradeCallCount++
-            expect(info.oldVersion).toBe(0) // First time opening
-            expect(info.newVersion).toBe(1)
-
             // Create a test object store during upgrade
             yield* db.createObjectStore("testStore").pipe(Effect.orDie)
+          }),
+          2: Effect.gen(function*() {
+            upgradeCallCount++
+            yield* Effect.void
+          }),
+          3: Effect.gen(function*() {
+            upgradeCallCount++
+            yield* Effect.void
           })
+        })
       }
+      const expectedCalls = 3 // since we are starting from version 1
 
       const runtime = createDatabaseTestRuntime(config)
 
@@ -213,8 +220,7 @@ describe("Effect IndexedDB - Runtime and Database Connection", () => {
       })
 
       const result = await runtime.runPromise(program)
-
-      expect(upgradeCallCount).toBe(1)
+      expect(upgradeCallCount).toBe(expectedCalls)
       expect(result).toContain("testStore")
 
       await runtime.dispose()
