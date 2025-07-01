@@ -1,5 +1,5 @@
 import { ManagedRuntime } from "effect"
-import { type IDBDatabaseConfig, IDBDatabaseService } from "./idbdatabse.js"
+import { type IDBDatabaseConfig, IDBDatabaseService } from "./idbdatabase.js"
 /**
  * Creates an application-level runtime with a IndexedDB connection.
  * Allows for a persistent connection to the IndexedDB database in a runtime not controlled by effect.

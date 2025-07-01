@@ -1,8 +1,9 @@
 import { Effect, Layer } from "effect"
 import { describe, expect, it } from "vitest"
-import type { IDBDatabaseConfig } from "../src/idbdatabse.js"
+import type { IDBDatabaseConfig } from "../src/idbdatabase.js"
 import type { IDBObjectStoreConfig } from "../src/idbobjectstore.js"
-import { IDBObjectStoreService, IDBTransactionService } from "../src/idbobjectstore.js"
+import { IDBObjectStoreService } from "../src/idbobjectstore.js"
+import { IDBTransactionService } from "../src/idbtransaction.js"
 import { createDatabaseTestRuntime } from "../src/runtime.js"
 
 const ContactObjectStoreConfig = {

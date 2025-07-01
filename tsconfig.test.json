@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.base.json",
-  "include": ["test", "src/idbdatabse.ts", "src/idbobjectstore.ts"],
+  "include": ["test", "src/idbdatabase.ts", "src/idbobjectstore.ts"],
   "references": [
     { "path": "tsconfig.src.json" }
   ],

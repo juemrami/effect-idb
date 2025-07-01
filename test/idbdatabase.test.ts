@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { beforeEach, describe, expect, it } from "vitest"
-import { type IDBDatabaseConfig, IDBDatabaseService, IDBFactoryImplementation } from "../src/idbdatabse.js"
+import { type IDBDatabaseConfig, IDBDatabaseService, IDBFactoryImplementation } from "../src/idbdatabase.js"
 import { createDatabaseTestRuntime } from "../src/runtime.js"
 
 describe("Effect IndexedDB - Runtime and Database Connection", () => {
