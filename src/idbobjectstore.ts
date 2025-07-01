@@ -1,3 +1,4 @@
+/* eslint-disable @effect/dprint */
 import { Context, Data, Effect, Layer, Ref } from "effect";
 import { IDBDatabaseService } from "./idbdatabse.js";
 
@@ -217,7 +218,7 @@ export class IDBTransactionService extends Context.Tag("EffectIDBTransaction")<
         )
     }
     // may need fresh layers for scope isolation and parallel transactions
-    private static makeFresh: typeof this.make = (perms) => Layer.fresh(this.make(perms))
+    // private static _makeFresh: typeof this.make = (perms) => Layer.fresh(this.make(perms))
     static ReadWrite = this.make("readwrite")
     static ReadOnly = this.make("readonly")
 }

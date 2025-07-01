@@ -1,3 +1,4 @@
+/* eslint-disable @effect/dprint */
 import { Effect, Context, Data, pipe, Layer, Fiber } from "effect";
 import { indexedDB as testIndexedDB } from "fake-indexeddb";
 import type { IDBObjectStoreIndexParams } from "./idbobjectstore.js";

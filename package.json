@@ -20,12 +20,16 @@
   "dependencies": {
     "effect": "latest"
   },
+  "exports": {
+    "main": "./dist/dist/mjs/index.js",
+    "module": "./dist/dist/esm/index.js",
+    "types": "./dist/dist/dts/index.d.ts"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/juemrami/effect-idb"
   },
   "devDependencies": {
-    "fake-indexeddb": "^6.0.1",
     "@babel/cli": "^7.24.8",
     "@babel/core": "^7.25.2",
     "@babel/plugin-transform-export-namespace-from": "^7.24.7",
@@ -47,6 +51,7 @@
     "eslint-plugin-import": "^2.30.0",
     "eslint-plugin-simple-import-sort": "^12.1.1",
     "eslint-plugin-sort-destructure-keys": "^2.0.0",
+    "fake-indexeddb": "^6.0.1",
     "tsx": "^4.17.0",
     "typescript": "^5.6.2",
     "vitest": "^3.2.4"
