@@ -193,7 +193,7 @@ describe("Effect IndexedDB - Runtime and Database Connection", () => {
       const config: IDBDatabaseConfig = {
         name: `${testDbName}-upgrade`,
         version: 3,
-        onUpgrade: (db) => ({
+        onUpgradeNeeded: (db) => ({
           1: Effect.gen(function*() {
             upgradeCallCount++
             // Create a test object store during upgrade

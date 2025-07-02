@@ -1,10 +1,33 @@
 import { Context, Data, Effect, Layer } from "effect"
 import { IDBTransactionService, TransactionRegistryService } from "./idbtransaction.js"
 
-export type IDBObjectStoreIndexParams = {
+export type IDBObjectStoreIndexParams =
+  | {
+    name: string
+    keyPath: Array<string>
+    options?: {
+      /** `keyPath` is an array, so `multiEntry` must be false or omitted */
+      multiEntry?: false
+      unique?: boolean
+    }
+  }
+  | {
+    name: string
+    keyPath: string
+    options?: {
+      /** `keyPath` is an array, so `multiEntry` must be false or omitted */
+      multiEntry?: boolean
+      unique?: boolean
+    }
+  }
+export type IDBObjectStoreIndexParams1<T> = {
   name: string
-  keyPath: string | Iterable<string>
-  options?: IDBIndexParameters
+  keyPath: T extends string | Array<string> ? T : never
+  options?: {
+    /** when `keyPath` is an array `multiEntry` must be false or omitted */
+    multiEntry?: T extends Array<string> ? false : boolean
+    unique?: boolean
+  }
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/add#exceptions

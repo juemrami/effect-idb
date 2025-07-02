@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect"
 import { describe, expect, it } from "vitest"
-import type { IDBDatabaseConfig } from "../src/idbdatabase.js"
-import type { IDBObjectStoreConfig } from "../src/idbobjectstore.js"
+import { type IDBDatabaseConfig } from "../src/idbdatabase.js"
+import type { IDBObjectStoreConfig, IDBObjectStoreIndexParams } from "../src/idbobjectstore.js"
 import { IDBObjectStoreService } from "../src/idbobjectstore.js"
 import { IDBTransactionService } from "../src/idbtransaction.js"
 import { createDatabaseTestRuntime } from "../src/runtime.js"
@@ -61,7 +61,7 @@ describe("IDBObjectStore Integration", () => {
     const runtime = createDatabaseTestRuntime({
       name: "testDB",
       version: 1,
-      onUpgrade(db) {
+      onUpgradeNeeded(db) {
         return {
           1: Effect.gen(function*() {
             yield* db.createObjectStore(
@@ -132,7 +132,7 @@ describe("IDBObjectStore Integration", () => {
     const runtime = createDatabaseTestRuntime({
       name: "batchTestDB",
       version: 1,
-      onUpgrade(db) {
+      onUpgradeNeeded(db) {
         return {
           1: Effect.gen(function*() {
             // Create both object stores
@@ -222,7 +222,7 @@ describe("IDBObjectStore Integration", () => {
     const config: IDBDatabaseConfig = {
       name: "testDB",
       version: 1,
-      onUpgrade: (upgradeService) => ({
+      onUpgradeNeeded: (upgradeService) => ({
         1: Effect.gen(function*() {
           // Create contacts object store if it doesn't exist
           yield* upgradeService.createObjectStore(
@@ -310,7 +310,7 @@ describe("IDBObjectStore Integration", () => {
     const runtime1 = createDatabaseTestRuntime({
       name: `${testDbName}-1`,
       version: 1,
-      onUpgrade: (upgradeService) => ({
+      onUpgradeNeeded: (upgradeService) => ({
         1: Effect.gen(function*() {
           yield* upgradeService.createObjectStore(
             ContactObjectStoreConfig.name,
@@ -324,7 +324,7 @@ describe("IDBObjectStore Integration", () => {
     const runtime2 = createDatabaseTestRuntime({
       name: `${testDbName}-2`,
       version: 1,
-      onUpgrade: (upgradeService) => ({
+      onUpgradeNeeded: (upgradeService) => ({
         1: Effect.gen(function*() {
           yield* upgradeService.createObjectStore(
             NotesObjectStoreConfig.name,
@@ -405,7 +405,7 @@ describe("IDBObjectStore Integration", () => {
       version: 1,
       // maybe this could be a way to define object stores that will be automatically created when not present
       objectStores: [ContactObjectStoreConfig, NotesObjectStoreConfig],
-      onUpgrade: (upgradeService) => ({
+      onUpgradeNeeded: (upgradeService) => ({
         1: upgradeService.autoGenerateObjectStores
       })
     })
@@ -433,5 +433,92 @@ describe("IDBObjectStore Integration", () => {
     )
     // Clean up
     runtime.dispose()
+  })
+  it("should handle auto migrations of object store index schemas", async () => {
+    const INDEX_SCHEMAS: Record<number, Array<IDBObjectStoreIndexParams>> = {
+      1: [
+        { name: "name", keyPath: "name" }
+      ],
+      // add index
+      2: [
+        { name: "name", keyPath: "name" },
+        { name: "email", keyPath: "email" }
+      ],
+      // remove index
+      3: [
+        { name: "email", keyPath: "email" },
+        { name: "createdAt", keyPath: "createdAt", options: { unique: true } },
+        // cannot have multi entry on multiple key paths?
+        { name: "compositeKey", keyPath: ["createdAt", "email"], options: { unique: true } }
+      ],
+      // we need a case where the options change only
+      4: [
+        { name: "name", keyPath: "name" },
+        { name: "email", keyPath: "email" },
+        { name: "createdAt", keyPath: "createdAt", options: { unique: false } },
+        { name: "compositeKey", keyPath: ["name", "email"], options: { unique: false } }
+      ]
+    }
+    const MAX_VERSION = Object.keys(INDEX_SCHEMAS).map(Number).reduce((max, v) => Math.max(max, v), 0)
+    for (let version = 1; version <= MAX_VERSION; version++) {
+      // Use unique database name for each version to avoid interference
+      const targetSchema = INDEX_SCHEMAS[Number(version)]
+      const runtime = createDatabaseTestRuntime({
+        name: `testDB_migrations`,
+        version: Number(version),
+        objectStores: [{ ...ContactObjectStoreConfig, indexes: targetSchema }],
+        onUpgradeNeeded: (upgradeService) => ({
+          1: upgradeService.autoGenerateObjectStores,
+          2: upgradeService.autoGenerateObjectStores,
+          3: upgradeService.autoGenerateObjectStores,
+          4: upgradeService.autoGenerateObjectStores
+        })
+      })
+
+      // Inspect the current schema of the contacts object store
+      const getObjectSchemaEffect = Effect.gen(function*() {
+        // const contactStore = yield* ContactObjectStore
+        const txn = yield* IDBTransactionService
+        const results = yield* txn.use((idbTxn) =>
+          Effect.sync(() => {
+            const store = idbTxn.objectStore(ContactObjectStoreConfig.name)
+            const indexes: Array<IDBObjectStoreIndexParams> = []
+            const indexNames = Array.from(store.indexNames)
+            for (const name of indexNames) {
+              indexes.push({
+                name,
+                keyPath: store.index(name).keyPath as string,
+                options: {
+                  multiEntry: store.index(name).multiEntry,
+                  unique: store.index(name).unique
+                }
+              })
+            }
+            return indexes
+          }), {
+          storeNames: [ContactObjectStoreConfig.name]
+        })
+        return results
+      }).pipe(
+        Effect.provide(
+          IDBTransactionService.ReadOnly
+        )
+      )
+
+      const schemaOut = await runtime.runPromise(getObjectSchemaEffect)
+      runtime.dispose()
+      expect(schemaOut.length).toBe(targetSchema.length)
+      const sortedTargetSchema = targetSchema.map((index) => ({
+        ...index,
+        // apply default missing options to target schema
+        options: {
+          multiEntry: index.options?.multiEntry ?? false,
+          unique: index.options?.unique ?? false
+        }
+      })).sort((a, b) => a.name.localeCompare(b.name))
+
+      const sortedSchemaOut = schemaOut.sort((a, b) => a.name.localeCompare(b.name))
+      expect(JSON.stringify(sortedSchemaOut)).toEqual(JSON.stringify(sortedTargetSchema))
+    }
   })
 })

@@ -1,6 +1,7 @@
-import { Context, Data, Effect, Fiber, Layer, pipe } from "effect"
+import { Context, Data, Effect, Exit, Layer, pipe } from "effect"
 import { indexedDB as testIndexedDB } from "fake-indexeddb"
 import type { IDBObjectStoreConfig, IDBObjectStoreIndexParams } from "./idbobjectstore.js"
+import { getRawObjectStoreFromRawTransactionEffect } from "./idbtransaction.js"
 
 export class IDBFactoryImplementation extends Context.Tag("IDBFactory")<IDBFactoryImplementation, IDBFactory>() {
   static readonly live = Layer.sync(IDBFactoryImplementation, () => window.indexedDB)
@@ -81,9 +82,27 @@ const createBaseService = (db: IDBDatabase) => {
   }
 }
 type DBServiceShape = ReturnType<typeof createBaseService>
-const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig) => {
+const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgradeTxn: IDBTransaction) => {
   const baseService = createBaseService(db)
-    const createObjectStore = (
+  const addStoreIndex = (
+    store: IDBObjectStore,
+    index: IDBObjectStoreIndexParams
+  ) =>
+    Effect.try({
+      try: () => {
+        return store.createIndex(index.name, index.keyPath, index.options)
+      },
+      catch: (error) => {
+        if (isKnownDOMException(error, CreateObjectStoreIndexExceptionType)) {
+          return new IDBDatabaseObjectStoreCreationError({
+            message: `Sync error creating index "${index.name}" on object store. \n. ${error}`,
+            storeName: store.name,
+            cause: error
+          })
+        } else throw new Error(`Unexpected error creating index "${index.name}"`, { cause: error })
+      }
+    })
+  const createObjectStore = (
     name: string,
     options?: IDBObjectStoreParameters,
     indexes: Array<IDBObjectStoreIndexParams> = []
@@ -103,21 +122,7 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig) => {
         }
       }),
       // create any specified indexes on the store
-      Effect.tap((store) =>
-        Effect.forEach(indexes, (index) =>
-          Effect.try({
-            try: () => store.createIndex(index.name, index.keyPath, index.options),
-            catch: (error) => {
-              if (isKnownDOMException(error, CreateObjectStoreIndexExceptionType)) {
-                return new IDBDatabaseObjectStoreCreationError({
-                  message: `Sync error creating index "${index.name}" on object store`,
-                  storeName: store.name,
-                  cause: error
-                })
-              } else throw new Error(`Unexpected error creating index "${index.name}"`, { cause: error })
-            }
-          }))
-      )
+      Effect.tap((store) => Effect.forEach(indexes, (index) => addStoreIndex(store, index)))
     )
   const deleteObjectStore = (name: string) => {
     return pipe(Effect.try({
@@ -129,22 +134,69 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig) => {
         })
     }))
   }
+  type KeyPath = string | Array<string>
+  const keyPathsMatch = (incoming: KeyPath, existing: KeyPath) => {
+    if (Array.isArray(incoming) && Array.isArray(existing)) {
+      // both are arrays, check if they match
+      return (incoming.length === existing.length &&
+        incoming.every((key, index) => key === existing[index]))
+    } else if (Array.isArray(incoming) || Array.isArray(existing)) {
+      // one is an array, the other is a string, they cannot match
+      return false
+    } else { // both are strings
+      return incoming === existing
+    }
+  }
   return {
     ...baseService,
     createObjectStore,
     deleteObjectStore,
+    /** Automatically generate defined object stores and their indexes. Destructively validates index configurations. */
     autoGenerateObjectStores: Effect.gen(function*() {
       // Create all object stores if they don't exist
       yield* Effect.forEach(config.objectStores ?? [], (storeConfig) =>
         Effect.gen(function*() {
-          // check if store already exists
-          if (db.objectStoreNames.contains(storeConfig.name)) return
-          // create the store and any indexes
-          yield* createObjectStore(
-            storeConfig.name,
-            storeConfig.params,
-            storeConfig.indexes ?? []
-          )
+          // check if store already exists & perform any index migrations if so
+          if (db.objectStoreNames.contains(storeConfig.name)) {
+            const store = yield* getRawObjectStoreFromRawTransactionEffect(upgradeTxn, storeConfig.name)
+            const existingIndexNames = Array.from(store.indexNames)
+            // Add or modify indexes
+            yield* Effect.forEach(
+              storeConfig.indexes,
+              Effect.fn(function*(incoming) {
+                if (existingIndexNames.includes(incoming.name)) {
+                  // on existing, check if options match & remake any indexes that differ
+                  // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/index#exceptions
+                  const existing = store.index(incoming.name) // todo: sync error handling
+                  if (
+                    !keyPathsMatch(incoming.keyPath, existing.keyPath) ||
+                    (incoming.options && existing.unique !== incoming.options.unique) ||
+                    (incoming.options && existing.multiEntry !== incoming.options.multiEntry)
+                  ) {
+                    // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/deleteIndex#exceptions
+                    store.deleteIndex(incoming.name) // todo: sync error handling
+                    yield* addStoreIndex(store, incoming)
+                  }
+                } else {
+                  // Add any new indexes
+                  yield* addStoreIndex(store, incoming)
+                }
+              })
+            )
+            // Finally delete any indexes that no longer exist in the config (assumed deprecated)
+            existingIndexNames.forEach((indexName) => {
+              if (!storeConfig.indexes?.some((index) => index.name === indexName)) {
+                store.deleteIndex(indexName) // todo: sync error handling
+              }
+            })
+          } else {
+            // create the store and any indexes
+            yield* createObjectStore(
+              storeConfig.name,
+              storeConfig.params,
+              storeConfig.indexes ?? []
+            )
+          }
         }))
     })
   }
@@ -153,7 +205,7 @@ export type IDBDatabaseConfig = {
   name: string
   version?: number // defaults to `1` if db doesnt already exist
   objectStores?: Array<IDBObjectStoreConfig>
-  onUpgrade?: (db: ReturnType<typeof createUpgradeService>) => Record<number, Effect.Effect<any, any, never>>
+  onUpgradeNeeded?: (db: ReturnType<typeof createUpgradeService>) => Record<number, Effect.Effect<any, any, never>>
 }
 export class IDBDatabaseService extends Context.Tag("IDBDatabaseService")<IDBDatabaseService, DBServiceShape>() {
   static make = (config: IDBDatabaseConfig) =>
@@ -169,8 +221,8 @@ export class IDBDatabaseService extends Context.Tag("IDBDatabaseService")<IDBDat
            * - new database version opened on another tab
            * - or before db version upgrades
            * - or db deletions (new db connections cant upgrade till old ones are closed)
-          */
-         (db) =>
+           */
+          (db) =>
             Effect.sync(() => {
               // console.log("closing db connection", db.name)
               db.close()
@@ -232,36 +284,48 @@ export class IDBFactoryService extends Context.Tag("IDBFactoryService")<
                *    - this includes error from deeper events like object store operation requests.
                */
               // upgrade needed handler fired on first (lifetime) db opens or a when new version is passed to `open`
-              let upgradeFiber: Fiber.RuntimeFiber<any, any> | null = null
               request.onupgradeneeded = (event) => {
                 // Handle database upgrade logic here if needed
-                if (config.onUpgrade === undefined) return
+                if (config.onUpgradeNeeded === undefined) return
                 if (event.newVersion === null) {
                   //  this means the database is being deleted.
                   return
                 }
                 // Because we are bound by this async handler system that lives in JS world
                 // not sure how to re-pop back into Effect world to execute any effects
-                // for the upgrade logic, besides to runFork it
+                // for the upgrade logic, besides to runSync it
                 const dbConnection = (event.target! as IDBOpenDBRequest).result
-                const upgradeService = createUpgradeService(dbConnection, config)
+                // special "versionchange" transaction used in the upgrade service
+                const transaction = (event.target! as IDBOpenDBRequest).transaction!
                 const startVersion = event.oldVersion + 1
                 const endVersion = dbConnection.version
 
-                // Create ordered effects for each version, calling onUpgrade with correct version info
-                const migrationEffects = config.onUpgrade(upgradeService)
+                // Create ordered effects for each version
+                const upgradeService = createUpgradeService(dbConnection, config, transaction)
+                const migrationEffects = config.onUpgradeNeeded(upgradeService)
                 const orderedMigrations = []
                 for (let version = startVersion; version <= endVersion; version++) {
                   if (migrationEffects[version]) orderedMigrations.push(migrationEffects[version])
                 }
-                // run the upgrade effect in a fiber. DO NOT run them concurrently
+                // run the upgrade effect synchronously. DO NOT run them concurrently
                 // todo: make sure that errors within a upgrade/migration can be rolled back without losing data
-                upgradeFiber = Effect.runFork(Effect.all(orderedMigrations))
+                const upgradeResult = Effect.runSyncExit(Effect.all(orderedMigrations))
+                Exit.match(upgradeResult, {
+                  onFailure: (cause) => {
+                    resume(Effect.fail(
+                      new IDBDatabaseOpenError({
+                        message: `Error occurred during database upgrade process.\n${cause}`,
+                        // @ts-ignore: todo propper error type propagation for the upgrade service
+                        cause
+                      })
+                    ))
+                  },
+                  onSuccess: () => void 0 // do nothing. let request.onsuccess resolve the db object
+                })
               }
               request.onerror = () => {
                 // interrupt any upgrades (not sure if this is needed)
                 // dont think `error` event can be fired while in an upgrade event
-                if (upgradeFiber) Fiber.interrupt(upgradeFiber)
                 if (isKnownDOMException(request.error, IDBRequestExceptionType)) {
                   resume(
                     Effect.fail(

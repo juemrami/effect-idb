@@ -1,11 +1,11 @@
 import { Context, Data, Effect, Layer, Ref } from "effect"
 import { IDBDatabaseService } from "./idbdatabase.js"
-import { type IDBObjectStoreIndexParams, makeObjectStoreProxyService } from "./idbobjectstore.js"
+import { makeObjectStoreProxyService } from "./idbobjectstore.js"
 
-export type IDBTransactionConfig = {
-  name: string
-  options: IDBObjectStoreParameters
-  indexes: IDBObjectStoreIndexParams
+export type IDBTransactionParams = {
+  storeNames: Array<string>
+  mode: IDBTransactionMode
+  options?: IDBTransactionOptions
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/IDBTransaction/objectStore#exceptions
@@ -38,6 +38,46 @@ export class IDBTransactionError extends Data.TaggedError("IDBTransactionError")
   readonly options?: IDBTransactionOptions
   readonly cause: TypeError | TypedDOMException<TransactionOpenExceptionType | TransactionObjectStoreExceptionType>
 }> {}
+
+export const getRawTransactionFromRawDatabaseEffect = (
+  db: IDBDatabase,
+  params: IDBTransactionParams
+) => {
+  return Effect.try({
+    // https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase/transaction#exceptions
+    try: () => db.transaction(params.storeNames, params.mode, params.options),
+    catch: (error) => {
+      if (isKnownDOMException(error, TransactionOpenExceptionType) || error instanceof TypeError) {
+        return new IDBTransactionError({
+          message: `Sync error opening transaction with database.\n${error.message}`,
+          storeNames: params.storeNames,
+          mode: params.mode,
+          cause: error
+        })
+      }
+      // defer with original error on unexpected errors
+      throw error
+    }
+  })
+}
+export const getRawObjectStoreFromRawTransactionEffect = (
+  transaction: IDBTransaction,
+  storeName: string
+) =>
+  Effect.try({
+    try: () => transaction.objectStore(storeName),
+    catch: (error) => {
+      if (isKnownDOMException(error, TransactionObjectStoreExceptionType)) {
+        return new IDBTransactionError({
+          message: `Object store "${storeName}" not found in transaction. \n${error.message}`,
+          storeNames: [storeName],
+          mode: transaction.mode,
+          cause: error
+        })
+      }
+      throw error
+    }
+  })
 const registryServiceEffect = Effect.gen(function*() {
   const storeNamesRef = yield* Ref.make(new Set<string>())
   const permissionRef = yield* Ref.make<"readonly" | "readwrite">("readonly")
@@ -56,23 +96,10 @@ const registryServiceEffect = Effect.gen(function*() {
       Effect.gen(function*() {
         const storeNames = yield* service.storeNames
         const mode = yield* Ref.get(permissionRef)
-        // console.log("Starting transaction with stores:", storeNames, "and permissions:", mode)
         const nativeTx = yield* dbService.use((db) =>
-          Effect.try({
-            // https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase/transaction#exceptions
-            try: () => db.transaction(storeNames, mode),
-            catch: (error) => {
-              if (isKnownDOMException(error, TransactionOpenExceptionType) || error instanceof TypeError) {
-                return new IDBTransactionError({
-                  message: `Sync error opening transaction with database.\n${error.message}`,
-                  storeNames,
-                  mode,
-                  cause: error
-                })
-              }
-              // throw new Error(`Unexpected error occurred opening transaction. ${error?.message}`, { cause: error });
-              throw error
-            }
+          getRawTransactionFromRawDatabaseEffect(db, {
+            storeNames,
+            mode
           })
         )
         yield* Ref.set(liveTransaction, nativeTx)
@@ -80,28 +107,14 @@ const registryServiceEffect = Effect.gen(function*() {
       }),
     useObjectStore: (storeName: string) =>
       Effect.gen(function*() {
-        // making some heursitic assumptions here that, but the time this function is called via the proxy methods,
-        // the user has finished defining all their object stores for this transaction.
+        // Requesting an object store will start the transaction if it is not already started:
+        // - making some heuristic assumptions here that, by the time this function is called via the proxy methods,
+        //   the user has finished defining/registering all the object stores used for this transaction.
         let nativeTx = yield* Ref.get(liveTransaction)
         if (!nativeTx) {
           nativeTx = yield* service.makeTransaction()
         }
-        const mode = yield* Ref.get(permissionRef)
-        const storeEffect = Effect.try({
-          try: () => nativeTx.objectStore(storeName),
-          catch: (error) => {
-            if (isKnownDOMException(error, TransactionObjectStoreExceptionType)) {
-              return new IDBTransactionError({
-                message: `Object store "${storeName}" not found in transaction. \n${error.message}`,
-                storeNames: [storeName],
-                mode,
-                cause: error
-              })
-            }
-            throw error
-          }
-        })
-        return yield* storeEffect
+        return yield* getRawObjectStoreFromRawTransactionEffect(nativeTx, storeName)
       })
   }
   return service
@@ -120,6 +133,22 @@ const makeTransactionService = (permissions: "readonly" | "readwrite") =>
     const registry = yield* TransactionRegistryService
     yield* registry.setPermissions(permissions)
     return {
+      use: <A, E, R>(cb: (txn: IDBTransaction) => Effect.Effect<R, E, A>, params?: Partial<IDBTransactionParams>) => {
+        return Effect.gen(function*() {
+          if (params) {
+            const { mode, options, storeNames } = params
+            if (storeNames && storeNames.length > 0) {
+              yield* Effect.forEach(storeNames, (storeName) => registry.addStore(storeName))
+            }
+            if (mode) yield* registry.setPermissions(mode as "readonly" | "readwrite")
+            if (options) {
+              // todo: handle options
+            }
+          }
+          const txn = yield* registry.makeTransaction()
+          return yield* cb(txn)
+        })
+      },
       objectStore: (storeName: string) =>
         Effect.gen(function*() {
           return yield* makeObjectStoreProxyService(storeName).pipe(
