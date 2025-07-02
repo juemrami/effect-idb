@@ -67,8 +67,23 @@ export class IDBDatabaseObjectStoreDeletionError extends Data.TaggedError("IDBDa
   readonly cause?: unknown
 }> {}
 
-const createServiceFromDB = (db: IDBDatabase) => {
-  const createObjectStore = (
+const createBaseService = (db: IDBDatabase) => {
+  // handle to raw db connection
+  const use = <A, E, R>(cb: (db: IDBDatabase) => Effect.Effect<A, E, R>) =>
+    Effect.gen(function*() {
+      return yield* cb(db)
+    })
+  return {
+    name: db.name,
+    version: db.version,
+    objectStoreNames: Effect.sync(() => Array.from(db.objectStoreNames) as Array<string>),
+    use
+  }
+}
+type DBServiceShape = ReturnType<typeof createBaseService>
+const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig) => {
+  const baseService = createBaseService(db)
+    const createObjectStore = (
     name: string,
     options?: IDBObjectStoreParameters,
     indexes: Array<IDBObjectStoreIndexParams> = []
@@ -114,27 +129,31 @@ const createServiceFromDB = (db: IDBDatabase) => {
         })
     }))
   }
-  // handle to raw db connection
-  const use = <A, E, R>(cb: (txn: IDBDatabase) => Effect.Effect<A, E, R>) =>
-    Effect.gen(function*() {
-      return yield* cb(db)
-    })
   return {
-    __testReference: Effect.sync(() => db),
-    name: db.name,
-    version: db.version,
-    objectStoreNames: Effect.sync(() => Array.from(db.objectStoreNames) as Array<string>),
+    ...baseService,
     createObjectStore,
     deleteObjectStore,
-    use
+    autoGenerateObjectStores: Effect.gen(function*() {
+      // Create all object stores if they don't exist
+      yield* Effect.forEach(config.objectStores ?? [], (storeConfig) =>
+        Effect.gen(function*() {
+          // check if store already exists
+          if (db.objectStoreNames.contains(storeConfig.name)) return
+          // create the store and any indexes
+          yield* createObjectStore(
+            storeConfig.name,
+            storeConfig.params,
+            storeConfig.indexes ?? []
+          )
+        }))
+    })
   }
 }
-type DBServiceShape = ReturnType<typeof createServiceFromDB>
 export type IDBDatabaseConfig = {
   name: string
   version?: number // defaults to `1` if db doesnt already exist
   objectStores?: Array<IDBObjectStoreConfig>
-  onUpgrade?: (db: DBServiceShape) => Record<number, Effect.Effect<any, any, never>>
+  onUpgrade?: (db: ReturnType<typeof createUpgradeService>) => Record<number, Effect.Effect<any, any, never>>
 }
 export class IDBDatabaseService extends Context.Tag("IDBDatabaseService")<IDBDatabaseService, DBServiceShape>() {
   static make = (config: IDBDatabaseConfig) =>
@@ -144,19 +163,21 @@ export class IDBDatabaseService extends Context.Tag("IDBDatabaseService")<IDBDat
         const dbFactory = yield* IDBFactoryService
         const db = yield* Effect.acquireRelease(
           dbFactory.open(config),
-          // `close` is automatically handled by the browser on page unload
-          // only times we'd want to explicitly close is when we want to because of:
-          //  - new database version opened on another tab
-          //  - or before db version upgrades
-          //  - or db deletions (new db connections cant upgrade till old ones are closed)
-          (db) =>
+          /**
+           * `close` is automatically handled by the browser on page unload
+           * only times you'd want to explicitly close is when we want to because of:
+           * - new database version opened on another tab
+           * - or before db version upgrades
+           * - or db deletions (new db connections cant upgrade till old ones are closed)
+          */
+         (db) =>
             Effect.sync(() => {
               // console.log("closing db connection", db.name)
               db.close()
             })
         )
         // console.log("creating db service", config)
-        return createServiceFromDB(db)
+        return createBaseService(db)
       })
     )
   static makeLive = (config: IDBDatabaseConfig) =>
@@ -223,12 +244,12 @@ export class IDBFactoryService extends Context.Tag("IDBFactoryService")<
                 // not sure how to re-pop back into Effect world to execute any effects
                 // for the upgrade logic, besides to runFork it
                 const dbConnection = (event.target! as IDBOpenDBRequest).result
-                const dbService = createServiceFromDB(dbConnection)
+                const upgradeService = createUpgradeService(dbConnection, config)
                 const startVersion = event.oldVersion + 1
                 const endVersion = dbConnection.version
 
                 // Create ordered effects for each version, calling onUpgrade with correct version info
-                const migrationEffects = config.onUpgrade(dbService)
+                const migrationEffects = config.onUpgrade(upgradeService)
                 const orderedMigrations = []
                 for (let version = startVersion; version <= endVersion; version++) {
                   if (migrationEffects[version]) orderedMigrations.push(migrationEffects[version])

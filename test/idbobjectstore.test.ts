@@ -113,7 +113,6 @@ describe("IDBObjectStore Integration", () => {
     // Clean up the runtime
     await runtime.dispose()
   })
-
   it("should batch operations across multiple stores in a single transaction", async () => {
     // Define types for our test data
     interface Contact {
@@ -399,5 +398,40 @@ describe("IDBObjectStore Integration", () => {
     // Clean up
     runtime1.dispose()
     runtime2.dispose()
+  })
+  it("should auto generate new object stores on database upgrade events", async () => {
+    const runtime = createDatabaseTestRuntime({
+      name: "testDB",
+      version: 1,
+      // maybe this could be a way to define object stores that will be automatically created when not present
+      objectStores: [ContactObjectStoreConfig, NotesObjectStoreConfig],
+      onUpgrade: (upgradeService) => ({
+        1: upgradeService.autoGenerateObjectStores
+      })
+    })
+
+    // Create a program to test auto-creation of object stores
+    const testProgram = Effect.gen(function*() {
+      const contactStore = yield* ContactObjectStore
+      const contactKey = yield* contactStore.put({ name: "Auto Created", email: "auto@example.com" })
+      const retrievedContact = yield* contactStore.get(contactKey)
+      return { contactKey, retrievedContact }
+    }).pipe(
+      Effect.provide(
+        Layer.provide(
+          ContactObjectStore.Default,
+          IDBTransactionService.ReadWrite
+        )
+      )
+    )
+    // Execute the test program
+    const result = await runtime.runPromise(testProgram)
+
+    // Verify the auto-created object store works as expected
+    expect(result.retrievedContact).toEqual(
+      expect.objectContaining({ name: "Auto Created", email: "auto@example.com" })
+    )
+    // Clean up
+    runtime.dispose()
   })
 })

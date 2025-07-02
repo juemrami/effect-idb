@@ -102,14 +102,14 @@ describe("Effect IndexedDB - Runtime and Database Connection", () => {
 
       const program1 = Effect.gen(function*() {
         const dbService = yield* IDBDatabaseService
-        const dbRef = yield* dbService.__testReference
+        const dbRef = yield* dbService.use((db) => Effect.succeed(db))
         const storeNames = yield* dbService.objectStoreNames
         return { dbRef, storeNames }
       })
 
       const program2 = Effect.gen(function*() {
         const dbService = yield* IDBDatabaseService
-        const dbRef = yield* dbService.__testReference
+        const dbRef = yield* dbService.use((db) => Effect.succeed(db))
         const storeNames = yield* dbService.objectStoreNames
         return { dbRef, storeNames }
       })
