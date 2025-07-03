@@ -1,4 +1,5 @@
-import { Context, Data, Effect, Exit, Layer, pipe } from "effect"
+import { Context, Data, Effect, Exit, Fiber, Layer, pipe } from "effect"
+import type { RuntimeFiber } from "effect/Fiber"
 import { indexedDB as testIndexedDB } from "fake-indexeddb"
 import {
   type IDBObjectStoreConfig,
@@ -155,6 +156,8 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
     ...baseService,
     createObjectStore,
     deleteObjectStore,
+    /** Effect handle to the "versionchange" IDBTransaction */
+    useTransaction: <A, E, R>(cb: (txn: IDBTransaction) => Effect.Effect<A, E, R>) => cb(upgradeTxn),
     objectStore: Effect.fn(function*(storeName) {
       return yield* makeObjectStoreProxyService(storeName).pipe(Effect.provideService(TransactionRegistryService, {
         // Mock registry service for upgrade transactions
@@ -302,6 +305,7 @@ export class IDBFactoryService extends Context.Tag("IDBFactoryService")<
                *    - this includes error from deeper events like object store operation requests.
                */
               // upgrade needed handler fired on first (lifetime) db opens or a when new version is passed to `open`
+              let upgradeFiber: RuntimeFiber<Array<any>, any> | undefined
               request.onupgradeneeded = (event) => {
                 // Handle database upgrade logic here if needed
                 if (config.onUpgradeNeeded === undefined) return
@@ -327,19 +331,28 @@ export class IDBFactoryService extends Context.Tag("IDBFactoryService")<
                 }
                 // run the upgrade effect synchronously. DO NOT run them concurrently
                 // todo: make sure that errors within a upgrade/migration can be rolled back without losing data
-                const upgradeResult = Effect.runSyncExit(Effect.all(orderedMigrations))
-                Exit.match(upgradeResult, {
-                  onFailure: (cause) => {
-                    resume(Effect.fail(
-                      new IDBDatabaseOpenError({
-                        message: `Error occurred during database upgrade process.\n${cause}`,
-                        // @ts-ignore: todo propper error type propagation for the upgrade service
-                        cause
-                      })
-                    ))
-                  },
-                  onSuccess: () => void 0 // do nothing. let request.onsuccess resolve the db object
-                })
+                upgradeFiber = Effect.runFork(Effect.all(orderedMigrations))
+                Effect.runPromiseExit(Fiber.await(upgradeFiber)).then(
+                  (awaitFiberExit) => {
+                    Exit.match(awaitFiberExit, {
+                      onSuccess: (upgradeEffectExit) => {
+                        Exit.match(upgradeEffectExit, {
+                          onSuccess: () => Effect.void, // use the onsuccess handler to `resume` the db connection
+                          onFailure: (cause) => {
+                            resume(Effect.fail(
+                              new IDBDatabaseOpenError({
+                                message: `Error occurred during database upgrade process.\n${cause}`,
+                                // @ts-ignore: todo proper error type propagation for the upgrade service
+                                cause
+                              })
+                            ))
+                          }
+                        })
+                      },
+                      onFailure: (cause) => resume(Effect.die(`Unexpected error during upgrade process. ${cause}`))
+                    })
+                  }
+                )
               }
               request.onerror = () => {
                 // interrupt any upgrades (not sure if this is needed)
@@ -358,7 +371,29 @@ export class IDBFactoryService extends Context.Tag("IDBFactoryService")<
                   resume(Effect.die(`Unexpected error opening IndexedDB database. ${request.error}`))
                 }
               }
-              request.onsuccess = () => resume(Effect.succeed(request.result))
+              request.onsuccess = () => {
+                if (upgradeFiber) {
+                  resume(pipe(
+                    Fiber.await(upgradeFiber),
+                    Effect.andThen((exit) =>
+                      Exit.match(exit, {
+                        onFailure: (cause) => {
+                          return Effect.fail(
+                            new IDBDatabaseOpenError({
+                              message: `Error occurred during database upgrade process.\n${cause}`,
+                              // @ts-ignore: todo propper error type propagation for the upgrade service
+                              cause
+                            })
+                          )
+                        },
+                        onSuccess: () => Effect.succeed(request.result)
+                      })
+                    )
+                  ))
+                } else {
+                  resume(Effect.succeed(request.result))
+                }
+              }
             })
             return dbConnection
           })
