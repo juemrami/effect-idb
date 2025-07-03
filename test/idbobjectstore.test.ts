@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect"
+import { Console, Effect, Layer } from "effect"
 import { describe, expect, it } from "vitest"
 import { type IDBDatabaseConfig } from "../src/idbdatabase.js"
 import type { IDBObjectStoreConfig, IDBObjectStoreIndexParams } from "../src/idbobjectstore.js"
@@ -520,5 +520,67 @@ describe("IDBObjectStore Integration", () => {
       const sortedSchemaOut = schemaOut.sort((a, b) => a.name.localeCompare(b.name))
       expect(JSON.stringify(sortedSchemaOut)).toEqual(JSON.stringify(sortedTargetSchema))
     }
+  })
+  it("should handle working with object stores within an upgrade needed effect", async () => {
+    type Contact = {
+      id?: number
+      name: string
+      email: string
+    }
+    type Note = {
+      id?: number
+      title: string
+      content: string
+      createdAt: Date
+    }
+    const runtime = createDatabaseTestRuntime({
+      name: "upgradeObjectStoreTestDB",
+      version: 2,
+      objectStores: [ContactObjectStoreConfig, NotesObjectStoreConfig],
+      onUpgradeNeeded: (upgradeService) => ({
+        1: upgradeService.autoGenerateObjectStores,
+        2: Effect.gen(function*() {
+          yield* upgradeService.autoGenerateObjectStores // incase new object stores/indexes are added
+          const contacts = yield* upgradeService.objectStore(ContactObjectStoreConfig.name)
+          const notes = yield* upgradeService.objectStore(NotesObjectStoreConfig.name)
+          const key = yield* contacts.add({ name: "Upgrade Test", email: "upgrade@test.com" })
+          yield* Console.log(`Added contact with key: ${key}`)
+          yield* notes.add({
+            title: "Upgrade Note",
+            content: "This note was created during upgrade",
+            createdAt: new Date()
+          })
+          yield* Console.log(`Added note with key: ${key}`)
+          return true
+        })
+      })
+    })
+    const testProgram = Effect.gen(function*() {
+      const contactStore = yield* ContactObjectStore
+      const noteStore = yield* NotesObjectStore
+
+      // Verify the contacts store has the upgrade test contact
+      const contact = yield* contactStore.get<Contact>(1)
+      expect(contact).toBeDefined()
+      expect(contact!.name).toBe("Upgrade Test")
+
+      // Verify the notes store has the upgrade test note
+      const note = yield* noteStore.get<Note>(1)
+      expect(note).toBeDefined()
+      expect(note!.title).toBe("Upgrade Note")
+    }).pipe(
+      Effect.provide(
+        Layer.provide(
+          Layer.mergeAll(
+            ContactObjectStore.Default,
+            NotesObjectStore.Default
+          ),
+          IDBTransactionService.ReadWrite
+        )
+      )
+    )
+
+    const result = await runtime.runPromise(testProgram)
+    expect(result).toBeUndefined() // Should complete without errors
   })
 })

@@ -1,7 +1,11 @@
 import { Context, Data, Effect, Exit, Layer, pipe } from "effect"
 import { indexedDB as testIndexedDB } from "fake-indexeddb"
-import type { IDBObjectStoreConfig, IDBObjectStoreIndexParams } from "./idbobjectstore.js"
-import { getRawObjectStoreFromRawTransactionEffect } from "./idbtransaction.js"
+import {
+  type IDBObjectStoreConfig,
+  type IDBObjectStoreIndexParams,
+  makeObjectStoreProxyService
+} from "./idbobjectstore.js"
+import { getRawObjectStoreFromRawTransactionEffect, TransactionRegistryService } from "./idbtransaction.js"
 
 export class IDBFactoryImplementation extends Context.Tag("IDBFactory")<IDBFactoryImplementation, IDBFactory>() {
   static readonly live = Layer.sync(IDBFactoryImplementation, () => window.indexedDB)
@@ -151,6 +155,16 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
     ...baseService,
     createObjectStore,
     deleteObjectStore,
+    objectStore: Effect.fn(function*(storeName) {
+      return yield* makeObjectStoreProxyService(storeName).pipe(Effect.provideService(TransactionRegistryService, {
+        // Mock registry service for upgrade transactions
+        addStore: (_) => baseService.objectStoreNames.pipe(Effect.map((stores) => new Set(stores))),
+        storeNames: baseService.objectStoreNames, // empty set of stores for upgrade transactions
+        makeTransaction: () => Effect.succeed(upgradeTxn), // use the upgrade transaction
+        useObjectStore: (storeName) => getRawObjectStoreFromRawTransactionEffect(upgradeTxn, storeName),
+        setPermissions: () => Effect.void // upgrade transactions are always readwrite
+      }))
+    }),
     /** Automatically generate defined object stores and their indexes. Destructively validates index configurations. */
     autoGenerateObjectStores: Effect.gen(function*() {
       // Create all object stores if they don't exist
@@ -205,6 +219,10 @@ export type IDBDatabaseConfig = {
   name: string
   version?: number // defaults to `1` if db doesnt already exist
   objectStores?: Array<IDBObjectStoreConfig>
+  /** Record of effects for each database version explaining any migrations.
+   * By default behaves like the standard IDB in that if no stores are created
+   * during the upgrade set, none will be available throughout the db connection.
+   */
   onUpgradeNeeded?: (db: ReturnType<typeof createUpgradeService>) => Record<number, Effect.Effect<any, any, never>>
 }
 export class IDBDatabaseService extends Context.Tag("IDBDatabaseService")<IDBDatabaseService, DBServiceShape>() {
