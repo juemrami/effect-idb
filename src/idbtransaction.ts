@@ -102,6 +102,10 @@ const registryServiceEffect = Effect.gen(function*() {
             mode
           })
         )
+        yield* Ref.update(dbService.__transactionHistoryRef, (history) => {
+          history.push({ mode, storeNames })
+          return history
+        })
         yield* Ref.set(liveTransaction, nativeTx)
         return nativeTx
       }),

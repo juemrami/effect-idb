@@ -1,4 +1,4 @@
-import { Context, Data, Effect, Exit, Fiber, Layer, pipe } from "effect"
+import { Context, Data, Effect, Exit, Fiber, Layer, pipe, Ref } from "effect"
 import type { RuntimeFiber } from "effect/Fiber"
 import { indexedDB as testIndexedDB } from "fake-indexeddb"
 import {
@@ -6,6 +6,7 @@ import {
   type IDBObjectStoreIndexParams,
   makeObjectStoreProxyService
 } from "./idbobjectstore.js"
+import type { IDBTransactionParams } from "./idbtransaction.js"
 import { getRawObjectStoreFromRawTransactionEffect, TransactionRegistryService } from "./idbtransaction.js"
 
 export class IDBFactoryImplementation extends Context.Tag("IDBFactory")<IDBFactoryImplementation, IDBFactory>() {
@@ -73,8 +74,9 @@ export class IDBDatabaseObjectStoreDeletionError extends Data.TaggedError("IDBDa
   readonly cause?: unknown
 }> {}
 
-const createBaseService = (db: IDBDatabase) => {
+const createBaseService = Effect.fn(function*(db: IDBDatabase) {
   // handle to raw db connection
+  const transactionHistory = yield* Ref.make([] as Array<IDBTransactionParams>)
   const use = <A, E, R>(cb: (db: IDBDatabase) => Effect.Effect<A, E, R>) =>
     Effect.gen(function*() {
       return yield* cb(db)
@@ -83,12 +85,14 @@ const createBaseService = (db: IDBDatabase) => {
     name: db.name,
     version: db.version,
     objectStoreNames: Effect.sync(() => Array.from(db.objectStoreNames) as Array<string>),
-    use
+    use,
+    __transactionHistoryRef: transactionHistory
   }
-}
-type DBServiceShape = ReturnType<typeof createBaseService>
+})
+type DBServiceShape = Effect.Effect.Success<ReturnType<typeof createBaseService>>
+
 const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgradeTxn: IDBTransaction) => {
-  const baseService = createBaseService(db)
+  const baseService = Effect.runSync(createBaseService(db))
   const addStoreIndex = (
     store: IDBObjectStore,
     index: IDBObjectStoreIndexParams
@@ -250,7 +254,7 @@ export class IDBDatabaseService extends Context.Tag("IDBDatabaseService")<IDBDat
             })
         )
         // console.log("creating db service", config)
-        return createBaseService(db)
+        return yield* createBaseService(db)
       })
     )
   static makeLive = (config: IDBDatabaseConfig) =>
