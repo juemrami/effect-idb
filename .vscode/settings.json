@@ -13,4 +13,5 @@
         "**/Thumbs.db": true
     },
     "hide-files.files": [],
+    "git.enabled": false,
 }

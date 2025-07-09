@@ -36,7 +36,7 @@ importers:
         version: 0.1.0
       '@effect/vitest':
         specifier: latest
-        version: 0.23.10(effect@3.16.10)(vitest@3.2.4(@types/node@22.15.34))
+        version: 0.23.12(effect@3.16.10)(vitest@3.2.4(@types/node@22.15.34))
       '@eslint/compat':
         specifier: 1.1.1
         version: 1.1.1
@@ -205,10 +205,10 @@ packages:
   '@effect/language-service@0.1.0':
     resolution: {integrity: sha512-BnlM8LlaqCAYgdRfxlbR7gXGh/FD1scL1fPgNVJEPoOM08od1jtJz+iKhwfaud8TPnnhZR+TED2h5ynjanLeCQ==}
 
-  '@effect/vitest@0.23.10':
-    resolution: {integrity: sha512-XdaA67TzoA61BtMRSQ9q77CGcNTiRPVNTeTHRYUM5scXQH+U3gH7RRFFG7PgmYNZp5WEeXg6VCAHV4+fGEdyZg==}
+  '@effect/vitest@0.23.12':
+    resolution: {integrity: sha512-kUR6Npn9gXsO+PlxnZQ9kmd7RzjT1Bl0foyypvCKctvRtG/CmqNgDNNZU9s/GZXvVAtbChjULXe1APyE2smrAw==}
     peerDependencies:
-      effect: ^3.16.10
+      effect: ^3.16.12
       vitest: ^3.0.0
 
   '@emnapi/core@1.4.3':
@@ -1565,6 +1565,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
+    deprecated: Glob versions prior to v9 are no longer supported
 
   globals@11.12.0:
     resolution: {integrity: sha512-WOBp/EEGUiIsJSp7wcv/y6MO+lV9UoncWqxuFfm8eBwzWNgyfBd6Gz+IeKQ9jCmyhoH99g15M3T+QaVHFjizVA==}
@@ -1636,6 +1637,7 @@ packages:
 
   inflight@1.0.6:
     resolution: {integrity: sha512-k92I/b08q4wvFscXCLvqfsHCrjrF7yiXsQuIVvVE7N82W3+aqpzuUdBbfhWcy/FZR3/4IgflMgKLOsvPDrGCJA==}
+    deprecated: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
 
   inherits@2.0.4:
     resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
@@ -2673,7 +2675,7 @@ snapshots:
 
   '@effect/language-service@0.1.0': {}
 
-  '@effect/vitest@0.23.10(effect@3.16.10)(vitest@3.2.4(@types/node@22.15.34))':
+  '@effect/vitest@0.23.12(effect@3.16.10)(vitest@3.2.4(@types/node@22.15.34))':
     dependencies:
       effect: 3.16.10
       vitest: 3.2.4(@types/node@22.15.34)

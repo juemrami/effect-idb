@@ -8,7 +8,12 @@ export type IDBObjectStoreIndexParams =
     name: string
     keyPath: Array<string>
     options?: {
-      /** `keyPath` is an array, so `multiEntry` must be false or omitted */
+      /** `keyPath` is an array, so `multiEntry` mu): (new () => Self) & Context.Tag<Self, Effect.Effect.Success<any>> & {
+  Config: IDBObjectStoreConfig
+  Default: Layer.Layer<Self, any, any>
+  WithReadWrite: Layer.Layer<Self, any, any>
+  WithReadOnly: Layer.Layer<Self, any, any>
+} {false or omitted */
       multiEntry?: false
       unique?: boolean
     }
@@ -303,3 +308,93 @@ export class IDBObjectStoreService extends Context.Tag(`${CONTEXT_PREFIX}ObjectS
 >() {
   static make = (config: IDBObjectStoreConfig) => Layer.effect(IDBObjectStoreService, makeStoreServiceEffect(config))
 }
+
+/**
+ * Creates a tagged IDB object store service layer with self-contained configuration and extensible methods.
+ *
+ * This helper generates a service class that encapsulates both the store configuration and custom business logic. \
+ * An optional type argument can be provided to specify the shape of objects stored in the IndexedDB store. \
+ * The `makeServiceEffect` function receives access to the base service operations (add, get, put, etc.)
+ * which can be extended with custom domain-specific methods.
+ *
+ * @example
+ * ```ts
+ * class MyContactStore extends TaggedIDBObjectStoreService<MyContactStore, Contact>()(
+ *   "MyContactStore",
+ *   {
+ *     storeConfig: { name: "contacts", params: { keyPath: "id" }, indexes: [] },
+ *     makeServiceEffect: (baseService) => Effect.succeed({
+ *       ...baseService,
+ *       addAsMutuals: (a: Contact, b: Contact) => Effect.gen(function*() {
+ *         // Custom business logic using baseService operations
+ *         yield* baseService.add(a)
+ *         yield* baseService.add(b)
+ *       })
+ *     })
+ *   }
+ * ) {}
+ * ```
+ */
+export const TaggedIDBObjectStoreService: <
+  Self,
+  DataShape = unknown
+>() => <
+  const Key extends string,
+  const Config extends IDBObjectStoreConfig,
+  const Args extends {
+    readonly storeConfig: Config
+    readonly makeServiceEffect: (
+      baseService: Effect.Effect.Success<ReturnType<typeof makeObjectStoreProxyService<DataShape>>>
+    ) => Effect.Effect<Effect.Service.AllowedType<Key, MakeFromArgs<Args>>, any, any>
+  },
+  const Make extends MakeFromArgs<Args>,
+  const LayerWithTransaction extends Layer.Layer<
+    Self,
+    Effect.Service.MakeError<Make>,
+    Exclude<Effect.Service.MakeContext<Make>, IDBTransactionService>
+  >
+>(key: Key, options: Args) => Effect.Service.Class<Self, Key, Make> & {
+  readonly Config: Config
+  readonly WithReadWrite: LayerWithTransaction
+  readonly WithReadOnly: LayerWithTransaction
+} = <Self, DataShape>() => (key, options) => {
+  const serviceEffect = Effect.gen(function*() {
+    const txn = yield* IDBTransactionService
+    const baseService = yield* txn.objectStore<DataShape>(options.storeConfig.name)
+    return yield* options.makeServiceEffect(baseService)
+  })
+
+  // Create the tag class properly
+  // @ts-ignore Effect.Service **is** callable
+  let TagClass = Effect.Service<Self>()(key, {
+    effect: serviceEffect
+  }) as Effect.Service.Class<Self, typeof key, MakeFromArgs<typeof options>>
+
+  // Layer caches. Prevents multiple calls to layer make effect.
+  let rwLayerCache, roLayerCache
+  TagClass = Object.defineProperties(TagClass, {
+    Config: {
+      get(this: any) {
+        return options.storeConfig
+      }
+    },
+    WithReadWrite: {
+      get(this: typeof TagClass) {
+        rwLayerCache ??= Layer.provide(this.Default as any, IDBTransactionService.ReadWrite)
+        return rwLayerCache
+      }
+    },
+    WithReadOnly: {
+      get(this: typeof TagClass) {
+        roLayerCache ??= Layer.provide(this.Default as any, IDBTransactionService.ReadOnly)
+        return roLayerCache
+      }
+    }
+  })
+  return TagClass as any
+}
+type MakeFromArgs<Args> = Args extends
+  { readonly makeServiceEffect: (baseService: any) => Effect.Effect<infer _A, infer _E, infer _R> } ? {
+    readonly effect: Effect.Effect<_A, _E, _R | IDBTransactionService>
+  } :
+  never
