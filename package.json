@@ -1,5 +1,5 @@
 {
-  "name": "effect-idb",
+  "name": "effect-indexeddb",
   "version": "0.0.0",
   "type": "module",
   "packageManager": "pnpm@10.11.1",
@@ -17,8 +17,8 @@
     "test": "vitest",
     "coverage": "vitest --coverage"
   },
-  "dependencies": {
-    "effect": "latest"
+  "peerDependencies": {
+    "effect": "3.16.10"
   },
   "exports": {
     "main": "./dist/dist/mjs/index.js",
@@ -29,7 +29,14 @@
     "type": "git",
     "url": "https://github.com/juemrami/effect-idb"
   },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "directory": "dist"
+  },
   "devDependencies": {
+    "effect": "^3.16.10",
     "@babel/cli": "^7.24.8",
     "@babel/core": "^7.25.2",
     "@babel/plugin-transform-export-namespace-from": "^7.24.7",
