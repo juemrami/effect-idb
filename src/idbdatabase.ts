@@ -1,6 +1,5 @@
 import { Context, Data, Effect, Exit, Fiber, Layer, pipe, Ref } from "effect"
 import type { RuntimeFiber } from "effect/Fiber"
-import { indexedDB as testIndexedDB } from "fake-indexeddb"
 import {
   type IDBObjectStoreConfig,
   type IDBObjectStoreIndexParams,
@@ -10,9 +9,8 @@ import type { IDBTransactionParams } from "./idbtransaction.js"
 import { getRawObjectStoreFromRawTransactionEffect, TransactionRegistryService } from "./idbtransaction.js"
 
 export class IDBFactoryImplementation extends Context.Tag("IDBFactory")<IDBFactoryImplementation, IDBFactory>() {
-  static readonly live = Layer.sync(IDBFactoryImplementation, () => window.indexedDB)
-  // use for testing outside of the browser environment
-  static readonly test = Layer.succeed(IDBFactoryImplementation, testIndexedDB)
+  static readonly Browser = Layer.sync(IDBFactoryImplementation, () => window.indexedDB)
+  static readonly makeExternal = (indexedDB: IDBFactory) => Layer.sync(IDBFactoryImplementation, () => indexedDB)
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/IDBRequest/error
@@ -262,10 +260,10 @@ export class IDBDatabaseService extends Context.Tag("IDBDatabaseService")<IDBDat
       IDBDatabaseService.make(config),
       IDBFactoryService.Live
     )
-  static makeTest = (config: IDBDatabaseConfig) =>
+  static makeTest = (config: IDBDatabaseConfig, indexedDB: IDBFactory) =>
     Layer.provide(
       IDBDatabaseService.make(config),
-      IDBFactoryService.Test
+      IDBFactoryService.makeTest(indexedDB)
     )
 }
 // unsure if this wrapper is needed or just makes this more complex.
@@ -404,6 +402,10 @@ export class IDBFactoryService extends Context.Tag("IDBFactoryService")<
       }
     })
   )
-  static Live = Layer.provide(this.DefaultNoDependencies, IDBFactoryImplementation.live)
-  static Test = Layer.provide(this.DefaultNoDependencies, IDBFactoryImplementation.test)
+  static Live = Layer.provide(this.DefaultNoDependencies, IDBFactoryImplementation.Browser)
+  static makeTest = (idbFactory: IDBFactory) =>
+    Layer.provide(
+      this.DefaultNoDependencies,
+      IDBFactoryImplementation.makeExternal(idbFactory)
+    )
 }

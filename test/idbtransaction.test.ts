@@ -4,7 +4,7 @@ import { IDBDatabaseService } from "../src/idbdatabase.js"
 import type { IDBObjectStoreConfig } from "../src/idbobjectstore.js"
 import { IDBObjectStoreService } from "../src/idbobjectstore.js"
 import { IDBTransactionService } from "../src/idbtransaction.js"
-import { createDatabaseTestRuntime } from "../src/runtime.js"
+import { createDatabaseTestRuntime } from "./runtime.js"
 
 const makeStoreEffect = Effect.gen(function*() {
   const baseService = yield* IDBObjectStoreService

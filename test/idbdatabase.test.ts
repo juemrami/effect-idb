@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { beforeEach, describe, expect, it } from "vitest"
-import { type IDBDatabaseConfig, IDBDatabaseService, IDBFactoryImplementation } from "../src/idbdatabase.js"
-import { createDatabaseTestRuntime } from "../src/runtime.js"
+import { type IDBDatabaseConfig, IDBDatabaseService } from "../src/idbdatabase.js"
+import { createDatabaseTestRuntime } from "./runtime.js"
 
 describe("Effect IndexedDB - Runtime and Database Connection", () => {
   const testDbName = `test-db-${Date.now()}`
@@ -224,20 +224,6 @@ describe("Effect IndexedDB - Runtime and Database Connection", () => {
       expect(result).toContain("testStore")
 
       await runtime.dispose()
-    })
-  })
-  describe("IDBFactoryService", () => {
-    it("should provide access to test IndexedDB factory", async () => {
-      const program = Effect.gen(function*() {
-        const factory = yield* IDBFactoryImplementation
-        return factory
-      })
-
-      const result = await Effect.runPromise(Effect.provide(program, IDBFactoryImplementation.test))
-
-      expect(result).toBeDefined()
-      expect(typeof result.open).toBe("function")
-      expect(typeof result.deleteDatabase).toBe("function")
     })
   })
 })

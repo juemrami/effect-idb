@@ -1,10 +1,11 @@
 import { Console, Effect, Layer } from "effect"
+import { indexedDB } from "fake-indexeddb"
 import { describe, expect, it } from "vitest"
 import { IDBDatabaseOpenError, IDBDatabaseService } from "../src/idbdatabase.js"
 import type { IDBObjectStoreConfig, IDBObjectStoreIndexParams } from "../src/idbobjectstore.js"
 import { IDBObjectStoreService } from "../src/idbobjectstore.js"
 import { IDBTransactionService } from "../src/idbtransaction.js"
-import { createDatabaseTestRuntime } from "../src/runtime.js"
+import { createDatabaseTestRuntime } from "./runtime.js"
 
 const ContactObjectStoreConfig = {
   name: "contacts",
@@ -266,7 +267,7 @@ describe("Database Upgrade Service", () => {
           yield* Effect.fail("Simulated upgrade failure")
         })
       })
-    })
+    }, indexedDB)
     const upgradeFailure = await Effect.runPromise(Effect.flip(
       Effect.gen(function*() {
         yield* Console.log("Running upgrade rollback test...") // this wont be reached. layer will fail on construction

@@ -12,8 +12,3 @@ export const createDatabaseRuntime = (config: IDBDatabaseConfig) => {
     IDBDatabaseService.makeLive(config)
   )
 }
-export const createDatabaseTestRuntime = (config: IDBDatabaseConfig) => {
-  return ManagedRuntime.make(
-    IDBDatabaseService.makeTest(config)
-  )
-}
