@@ -59,7 +59,7 @@ importers:
         specifier: ^0.4.0
         version: 0.4.0(patch_hash=fc3e96d4b985224ea421609113ce0b74baeb5000c4f0019bfc67780795721adf)(@babel/core@7.27.7)
       effect:
-        specifier: ^3.16.0
+        specifier: ^3.16.10
         version: 3.16.10
       eslint:
         specifier: ^9.10.0
@@ -91,6 +91,7 @@ importers:
       vitest:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@22.15.34)
+    publishDirectory: dist
 
 packages:
 
