@@ -8,7 +8,11 @@ import {
 import type { IDBTransactionParams } from "./idbtransaction.js"
 import { getRawObjectStoreFromRawTransactionEffect, TransactionRegistryService } from "./idbtransaction.js"
 
-export class IDBFactoryImplementation extends Context.Tag("IDBFactory")<IDBFactoryImplementation, IDBFactory>() {
+const CONTEXT_PREFIX = "/src/idbdatabase:"
+
+export class IDBFactoryImplementation
+  extends Context.Tag(`${CONTEXT_PREFIX}IDBFactory`)<IDBFactoryImplementation, IDBFactory>()
+{
   static readonly Browser = Layer.sync(IDBFactoryImplementation, () => window.indexedDB)
   static readonly makeExternal = (indexedDB: IDBFactory) => Layer.sync(IDBFactoryImplementation, () => indexedDB)
 }
@@ -221,16 +225,27 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
   }
 }
 export type IDBDatabaseConfig = {
+  /** The name of the database */
   name: string
-  version?: number // defaults to `1` if db doesnt already exist
+  /** Database version. If omitted with either:
+   * 1. Create a new database with version `1` IFF the database does not yet exist. \
+   * or
+   * 2. Open the latest version of the database if it already exists.
+   */
+  version?: number
+  /** Array of object store configurations include in the auto upgrade process of `upgradeService.autoGenerateObjectStores` */
   objectStores?: Array<IDBObjectStoreConfig>
   /** Record of effects for each database version explaining any migrations.
    * By default behaves like the standard IDB in that if no stores are created
-   * during the upgrade set, none will be available throughout the db connection.
+   * during the upgrade transaction then none will be available throughout the db connection.
    */
-  onUpgradeNeeded?: (db: ReturnType<typeof createUpgradeService>) => Record<number, Effect.Effect<any, any, never>>
+  onUpgradeNeeded?: (
+    upgradeService: ReturnType<typeof createUpgradeService>
+  ) => Record<number, Effect.Effect<any, any, never>>
 }
-export class IDBDatabaseService extends Context.Tag("IDBDatabaseService")<IDBDatabaseService, DBServiceShape>() {
+export class IDBDatabaseService
+  extends Context.Tag(`${CONTEXT_PREFIX}DatabaseService`)<IDBDatabaseService, DBServiceShape>()
+{
   static make = (config: IDBDatabaseConfig) =>
     Layer.scoped(
       IDBDatabaseService,
@@ -267,7 +282,7 @@ export class IDBDatabaseService extends Context.Tag("IDBDatabaseService")<IDBDat
     )
 }
 // unsure if this wrapper is needed or just makes this more complex.
-export class IDBFactoryService extends Context.Tag("IDBFactoryService")<
+export class IDBFactoryService extends Context.Tag(`${CONTEXT_PREFIX}FactoryService`)<
   IDBFactoryService,
   {
     open: (config: IDBDatabaseConfig) => Effect.Effect<IDBDatabase, IDBDatabaseOpenError>

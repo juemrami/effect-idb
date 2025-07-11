@@ -2,6 +2,8 @@ import { Context, Data, Effect, Layer, Ref } from "effect"
 import { IDBDatabaseService } from "./idbdatabase.js"
 import { makeObjectStoreProxyService } from "./idbobjectstore.js"
 
+const CONTEXT_PREFIX = "/src/idbtransaction:"
+
 export type IDBTransactionParams = {
   storeNames: Array<string>
   mode: IDBTransactionMode
@@ -124,7 +126,7 @@ const registryServiceEffect = Effect.gen(function*() {
   return service
 })
 
-export class TransactionRegistryService extends Context.Tag("TransactionRegistryService")<
+export class TransactionRegistryService extends Context.Tag(`${CONTEXT_PREFIX}TransactionRegistryService`)<
   TransactionRegistryService,
   Effect.Effect.Success<typeof registryServiceEffect>
 >() {
@@ -162,7 +164,7 @@ const makeTransactionService = (permissions: "readonly" | "readwrite") =>
     }
   })
 
-export class IDBTransactionService extends Context.Tag("IDBTransactionService")<
+export class IDBTransactionService extends Context.Tag(`${CONTEXT_PREFIX}TransactionService`)<
   IDBTransactionService,
   Effect.Effect.Success<ReturnType<typeof makeTransactionService>>
 >() {

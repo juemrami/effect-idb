@@ -1,6 +1,8 @@
 import { Context, Data, Effect, Layer } from "effect"
 import { IDBTransactionService, TransactionRegistryService } from "./idbtransaction.js"
 
+const CONTEXT_PREFIX = "/src/idbobjectstore:"
+
 export type IDBObjectStoreIndexParams =
   | {
     name: string
@@ -295,7 +297,7 @@ export type IDBObjectStoreConfig = {
   params: IDBObjectStoreParameters
   indexes: Array<IDBObjectStoreIndexParams>
 }
-export class IDBObjectStoreService extends Context.Tag("EffectIDBObjectStore")<
+export class IDBObjectStoreService extends Context.Tag(`${CONTEXT_PREFIX}ObjectStoreService`)<
   IDBObjectStoreService,
   Effect.Effect.Success<ReturnType<typeof makeStoreServiceEffect>>
 >() {
