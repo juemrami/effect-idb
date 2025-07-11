@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest"
 import { IDBDatabaseOpenError, IDBDatabaseService } from "../src/idbdatabase.js"
 import type { IDBObjectStoreConfig, IDBObjectStoreIndexParams } from "../src/idbobjectstore.js"
 import { IDBObjectStoreService } from "../src/idbobjectstore.js"
-import { IDBTransactionService } from "../src/idbtransaction.js"
+import { IDBTransactionError, IDBTransactionService } from "../src/idbtransaction.js"
 import { createDatabaseTestRuntime } from "./runtime.js"
 
 const ContactObjectStoreConfig = {
@@ -17,6 +17,11 @@ const ContactObjectStoreConfig = {
     { name: "name", keyPath: "name" },
     { name: "email", keyPath: "email" }
   ]
+}
+type Contact = {
+  id?: number
+  name: string
+  email: string
 }
 class ContactObjectStore extends Effect.Service<ContactObjectStore>()(
   "ContactObjectStore",
@@ -55,7 +60,7 @@ describe("Database Upgrade Service", () => {
       name: "testDB",
       version: 1,
       // maybe this could be a way to define object stores that will be automatically created when not present
-      objectStores: [ContactObjectStoreConfig, NotesObjectStoreConfig],
+      autoObjectStores: [ContactObjectStoreConfig, NotesObjectStoreConfig],
       onUpgradeNeeded: (upgradeService) => ({
         1: upgradeService.autoGenerateObjectStores
       })
@@ -118,13 +123,14 @@ describe("Database Upgrade Service", () => {
       const runtime = createDatabaseTestRuntime({
         name: `testDB_migrations`,
         version: Number(version),
-        objectStores: [{ ...ContactObjectStoreConfig, indexes: targetSchema }],
-        onUpgradeNeeded: (upgradeService) => ({
-          1: upgradeService.autoGenerateObjectStores,
-          2: upgradeService.autoGenerateObjectStores,
-          3: upgradeService.autoGenerateObjectStores,
-          4: upgradeService.autoGenerateObjectStores
-        })
+        autoObjectStores: [{ ...ContactObjectStoreConfig, indexes: targetSchema }]
+        // No need to provide onUpgradeNeeded here since we are testing auto migrations
+        // onUpgradeNeeded: (upgradeService) => ({
+        //   1: upgradeService.autoGenerateObjectStores,
+        //   2: upgradeService.autoGenerateObjectStores,
+        //   3: upgradeService.autoGenerateObjectStores,
+        //   4: upgradeService.autoGenerateObjectStores
+        // })
       })
 
       // Inspect the current schema of the contacts object store
@@ -175,11 +181,6 @@ describe("Database Upgrade Service", () => {
   })
 
   it("should handle working with object stores within an upgrade needed effect", async () => {
-    type Contact = {
-      id?: number
-      name: string
-      email: string
-    }
     type Note = {
       id?: number
       title: string
@@ -189,9 +190,11 @@ describe("Database Upgrade Service", () => {
     const runtime = createDatabaseTestRuntime({
       name: "upgradeObjectStoreTestDB",
       version: 2,
-      objectStores: [ContactObjectStoreConfig, NotesObjectStoreConfig],
+      autoObjectStores: [ContactObjectStoreConfig, NotesObjectStoreConfig],
       onUpgradeNeeded: (upgradeService) => ({
-        1: upgradeService.autoGenerateObjectStores,
+        // If all you're doing is the auto migration for a version, it can be omitted here
+        // the default behavior is to fallback to autoGenerateObjectStores
+        // 1: upgradeService.autoGenerateObjectStores,
         2: Effect.gen(function*() {
           yield* upgradeService.autoGenerateObjectStores // incase new object stores/indexes are added
           const contacts = yield* upgradeService.objectStore(ContactObjectStoreConfig.name)
@@ -241,7 +244,7 @@ describe("Database Upgrade Service", () => {
     const dbLayer = IDBDatabaseService.makeTest({
       name: "upgradeRollbackTestDB",
       version: 2,
-      objectStores: [{
+      autoObjectStores: [{
         ...ContactObjectStoreConfig,
         indexes: [
           { name: "name", keyPath: "name" },
@@ -289,5 +292,34 @@ describe("Database Upgrade Service", () => {
       Effect.provide(IDBTransactionService.ReadOnly)
     )
     await Effect.runPromise(testProgram.pipe(Effect.provide(dbLayer)))
+  })
+  it("should skip auto-generating object stores when a custom upgrade function is provided", async () => {
+    const runtime = createDatabaseTestRuntime({
+      name: "customUpgradeTestDB",
+      version: 1,
+      autoObjectStores: [ContactObjectStoreConfig],
+      onUpgradeNeeded: (_) => ({
+        1: Effect.void // Skip auto generation
+      })
+    })
+
+    const testProgram = Effect.gen(function*() {
+      const contactStore = yield* ContactObjectStore
+      return yield* contactStore.get<Contact>(1)
+    }).pipe(
+      Effect.provide(
+        Layer.provide(
+          ContactObjectStore.Default,
+          IDBTransactionService.ReadWrite
+        )
+      ),
+      Effect.flip
+    )
+
+    const result = await runtime.runPromise(testProgram)
+    // expect result to be an object store not found transaction error
+    expect(result).toBeInstanceOf(IDBTransactionError)
+    expect(result.cause.name).toBe("NotFoundError")
+    runtime.dispose()
   })
 })

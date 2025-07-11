@@ -177,7 +177,7 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
     /** Automatically generate defined object stores and their indexes. Destructively validates index configurations. */
     autoGenerateObjectStores: Effect.gen(function*() {
       // Create all object stores if they don't exist
-      yield* Effect.forEach(config.objectStores ?? [], (storeConfig) =>
+      yield* Effect.forEach(config.autoObjectStores ?? [], (storeConfig) =>
         Effect.gen(function*() {
           // check if store already exists & perform any index migrations if so
           if (db.objectStoreNames.contains(storeConfig.name)) {
@@ -234,11 +234,12 @@ export type IDBDatabaseConfig = {
    */
   version?: number
   /** Array of object store configurations include in the auto upgrade process of `upgradeService.autoGenerateObjectStores` */
-  objectStores?: Array<IDBObjectStoreConfig>
-  /** Record of effects for each database version explaining any migrations.
-   * By default behaves like the standard IDB in that if no stores are created
-   * during the upgrade transaction then none will be available throughout the db connection.
-   */
+  autoObjectStores?: Array<IDBObjectStoreConfig>
+  /** `Record` of effects for each database version describing any schema changes (object stores name and their indices). \
+   * If an effect is not provided for a version, the upgrade service will automatically create any object stores
+   * defined in `autoObjectStores` via `upgradeService.autoGenerateObjectStores()`. \
+   * This is in contrast to the standard IDB behavior, which does not create any object stores
+   * unless explicitly defined during the upgrade process. */
   onUpgradeNeeded?: (
     upgradeService: ReturnType<typeof createUpgradeService>
   ) => Record<number, Effect.Effect<any, any, never>>
@@ -251,7 +252,7 @@ export class IDBDatabaseService
       IDBDatabaseService,
       Effect.gen(function*() {
         const dbFactory = yield* IDBFactoryService
-        const db = yield* Effect.acquireRelease(
+        const connection = yield* Effect.acquireRelease(
           dbFactory.open(config),
           /**
            * `close` is automatically handled by the browser on page unload
@@ -260,14 +261,9 @@ export class IDBDatabaseService
            * - or before db version upgrades
            * - or db deletions (new db connections cant upgrade till old ones are closed)
            */
-          (db) =>
-            Effect.sync(() => {
-              // console.log("closing db connection", db.name)
-              db.close()
-            })
+          (db) => Effect.sync(() => db.close())
         )
-        // console.log("creating db service", config)
-        return yield* createBaseService(db)
+        return yield* createBaseService(connection)
       })
     )
   static makeLive = (config: IDBDatabaseConfig) =>
@@ -321,18 +317,17 @@ export class IDBFactoryService extends Context.Tag(`${CONTEXT_PREFIX}FactoryServ
                *  - `.onerror` event will fire for any event error that isn't caught in the lifetime of the db connection.
                *    - this includes error from deeper events like object store operation requests.
                */
-              // upgrade needed handler fired on first (lifetime) db opens or a when new version is passed to `open`
               let upgradeFiber: RuntimeFiber<Array<any>, any> | undefined
+              // upgrade needed handler fired on first (lifetime) db opens or a when new version is passed to `open`
               request.onupgradeneeded = (event) => {
-                // Handle database upgrade logic here if needed
-                if (config.onUpgradeNeeded === undefined) return
-                if (event.newVersion === null) {
+                if (config.onUpgradeNeeded === undefined && config.autoObjectStores === undefined) return
+                if (event.newVersion === null) { //
                   //  this means the database is being deleted.
                   return
                 }
                 // Because we are bound by this async handler system that lives in JS world
-                // not sure how to re-pop back into Effect world to execute any effects
-                // for the upgrade logic, besides to runSync it
+                // not sure how to re-pop back into Effect world to execute any effects for the upgrade logic,
+                // (besides to runSync it
                 const dbConnection = (event.target! as IDBOpenDBRequest).result
                 // special "versionchange" transaction used in the upgrade service
                 const transaction = (event.target! as IDBOpenDBRequest).transaction!
@@ -341,10 +336,15 @@ export class IDBFactoryService extends Context.Tag(`${CONTEXT_PREFIX}FactoryServ
 
                 // Create ordered effects for each version
                 const upgradeService = createUpgradeService(dbConnection, config, transaction)
-                const migrationEffects = config.onUpgradeNeeded(upgradeService)
+                const migrationEffects = config.onUpgradeNeeded ? config.onUpgradeNeeded(upgradeService) : {}
                 const orderedMigrations = []
                 for (let version = startVersion; version <= endVersion; version++) {
                   if (migrationEffects[version]) orderedMigrations.push(migrationEffects[version])
+                  // if no migration effect declared for this version, auto generate any object stores
+                  // this is an opinion, standard api behavior is to not create any object stores unless explicitly defined
+                  else if (config.autoObjectStores?.length) {
+                    orderedMigrations.push(upgradeService.autoGenerateObjectStores)
+                  }
                 }
                 // run the upgrade effect synchronously. DO NOT run them concurrently
                 // todo: make sure that errors within a upgrade/migration can be rolled back without losing data
@@ -372,8 +372,6 @@ export class IDBFactoryService extends Context.Tag(`${CONTEXT_PREFIX}FactoryServ
                 )
               }
               request.onerror = () => {
-                // interrupt any upgrades (not sure if this is needed)
-                // dont think `error` event can be fired while in an upgrade event
                 if (isKnownDOMException(request.error, IDBRequestExceptionType)) {
                   resume(
                     Effect.fail(

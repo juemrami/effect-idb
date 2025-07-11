@@ -61,7 +61,7 @@ it("should share a transaction instantiated in multiple places", async () => {
   const dbRuntime = createDatabaseTestRuntime({
     name: "sharedTransactionTestDB",
     version: 1,
-    objectStores: [ContactObjectStore.config, NotesObjectStoreConfig],
+    autoObjectStores: [ContactObjectStore.config, NotesObjectStoreConfig],
     onUpgradeNeeded: (upgradeService) => ({
       1: upgradeService.autoGenerateObjectStores
     })
