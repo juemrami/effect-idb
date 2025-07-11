@@ -207,7 +207,7 @@ const matchObjectStoreError = (
  * Wraps an IndexedDB request in an Effect that handles the async completion automatically.
  * This allows for natural chaining of operations without explicit callback handling.
  */
-const useStoreRequest = <T>(
+const useRawStoreRequest = <T>(
   objectRequest: () => IDBRequest<T>,
   operation: ServiceOperations
 ): Effect.Effect<T, IDBObjectStoreOperationError, never> => {
@@ -239,55 +239,55 @@ const useStoreRequest = <T>(
   })
 }
 // used by the transaction service to create a Effect wrappers around the object methods
-export const makeObjectStoreProxyService = (storeName: string) =>
+export const makeObjectStoreProxyService = <T = unknown>(storeName: string) =>
   Effect.gen(function*() {
     const registry = yield* TransactionRegistryService
     yield* registry.addStore(storeName)
     return {
       name: storeName,
-      add: (value: unknown, key?: IDBValidKey) =>
+      add: <U = T>(value: U, key?: IDBValidKey) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
-          const request = useStoreRequest(store.add.bind(store, value, key), "add")
+          const request = useRawStoreRequest(store.add.bind(store, value, key), "add")
           return yield* request
         }),
       clear: () =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
-          return yield* useStoreRequest(store.clear.bind(store), "clear")
+          return yield* useRawStoreRequest(store.clear.bind(store), "clear")
         }),
-      put: (value: unknown, key?: IDBValidKey) =>
+      put: <U = T>(value: U, key?: IDBValidKey) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
-          return yield* useStoreRequest(store.put.bind(store, value, key), "put")
+          return yield* useRawStoreRequest(store.put.bind(store, value, key), "put")
         }),
-      get: <T>(key: IDBValidKey) =>
+      get: <U = T>(key: IDBValidKey) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
-          return yield* useStoreRequest<T | undefined>(store.get.bind(store, key), "get")
+          return yield* useRawStoreRequest<U | undefined>(store.get.bind(store, key), "get")
         }),
-      getAll: <T>(query?: IDBKeyRange, count?: number) =>
+      getAll: <U = T>(query?: IDBKeyRange, count?: number) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
-          return yield* useStoreRequest<Array<T>>(store.getAll.bind(store, query, count), "getAll")
+          return yield* useRawStoreRequest<Array<U>>(store.getAll.bind(store, query, count), "getAll")
         }),
       delete: (key: IDBValidKey | IDBKeyRange) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
-          return yield* useStoreRequest(store.delete.bind(store, key), "delete").pipe() // Effect.map(() => true) // Convert void result to boolean
+          return yield* useRawStoreRequest(store.delete.bind(store, key), "delete")
+          // .pipe(Effect.andThen(() => true)) // Convert void result to boolean
         })
     }
   })
 
-const makeStoreServiceEffect = (config: IDBObjectStoreConfig) => {
+const makeStoreServiceEffect = <T>(config: IDBObjectStoreConfig) => {
   return Effect.gen(function*() {
     const transaction = yield* IDBTransactionService
-    const store = yield* transaction.objectStore(config.name)
+    const store = yield* transaction.objectStore<T>(config.name)
     // todo: figure out exactly what to expose on this interface
     return {
       config,
-      ...store,
-      name: undefined // name is already in the config, so we can omit it here
+      ...store
     }
   })
 }

@@ -155,9 +155,9 @@ const makeTransactionService = (permissions: "readonly" | "readwrite") =>
           return yield* cb(txn)
         })
       },
-      objectStore: (storeName: string) =>
+      objectStore: <T>(storeName: string) =>
         Effect.gen(function*() {
-          return yield* makeObjectStoreProxyService(storeName).pipe(
+          return yield* makeObjectStoreProxyService<T>(storeName).pipe(
             Effect.provideService(TransactionRegistryService, registry)
           )
         })
