@@ -357,6 +357,8 @@ export const TaggedIDBObjectStoreService: <
   readonly Config: Config
   readonly WithReadWrite: LayerWithTransaction
   readonly WithReadOnly: LayerWithTransaction
+  readonly WithFreshReadWrite: LayerWithTransaction
+  readonly WithFreshReadOnly: LayerWithTransaction
 } = <Self, DataShape>() => (key, options) => {
   const serviceEffect = Effect.gen(function*() {
     const txn = yield* IDBTransactionService
@@ -384,10 +386,20 @@ export const TaggedIDBObjectStoreService: <
         return rwLayerCache
       }
     },
+    WithFreshReadWrite: {
+      get(this: typeof TagClass) {
+        return Layer.fresh(Layer.provide(this.Default as any, IDBTransactionService.ReadWrite))
+      }
+    },
     WithReadOnly: {
       get(this: typeof TagClass) {
         roLayerCache ??= Layer.provide(this.Default as any, IDBTransactionService.ReadOnly)
         return roLayerCache
+      }
+    },
+    WithFreshReadOnly: {
+      get(this: typeof TagClass) {
+        return Layer.fresh(Layer.provide(this.Default as any, IDBTransactionService.ReadOnly))
       }
     }
   })

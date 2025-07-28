@@ -1,6 +1,7 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Ref } from "effect"
 import { describe } from "node:test"
 import { expect, it } from "vitest"
+import { IDBDatabaseService } from "../src/idbdatabase.js"
 import type { IDBObjectStoreConfig } from "../src/idbobjectstore.js"
 import { IDBObjectStoreService, TaggedIDBObjectStoreService } from "../src/idbobjectstore.js"
 import { IDBTransactionService } from "../src/idbtransaction.js"
@@ -149,5 +150,103 @@ describe("User Extended Object Store Service Tests", () => {
       keyB: 2
     })
     dbRuntime.dispose()
+  })
+  it("should only create a single transaction registry layer for multiple stores with provided transactions", async () => {
+    const dbRuntime = createDatabaseTestRuntime({
+      name: "singleTransactionRegistryDB",
+      version: 1,
+      autoObjectStores: [ContactObjectStore.Config, NoteObjectStore.Config]
+    })
+    const program = Effect.gen(function*() {
+      const contactStore = yield* ContactObjectStore
+      const noteStore = yield* NoteObjectStore
+      const { keyA: _, keyB } = yield* contactStore.addAsMutuals(
+        { name: "Alice", email: "alice@example.com", createdAt: new Date().toISOString() },
+        { name: "Bob", email: "bob@example.com", createdAt: new Date().toISOString() }
+      )
+      return yield* noteStore.addFriendNote(
+        { content: "Hello Bob!", createdAt: new Date().getTime() },
+        keyB
+      )
+    })
+    const _ = await dbRuntime.runPromise(
+      Effect.provide(
+        program,
+        Layer.mergeAll(
+          ContactObjectStore.WithReadWrite,
+          NoteObjectStore.WithReadWrite
+        )
+      )
+    )
+    const txns = await dbRuntime.runPromise(Effect.gen(function*() {
+      const db = yield* IDBDatabaseService
+      return yield* Ref.get(db.__transactionHistoryRef)
+    }))
+    expect(txns.length).toBe(1) // Should only have one transaction
+    expect(txns[0].mode).toBe("readwrite") // Should be readwrite
+  })
+  it("should treat b2b transaction effects with same scope as two separate db transactions", async () => {
+    const dbRuntime = createDatabaseTestRuntime({
+      name: "b2bTransactionTestDB",
+      version: 1,
+      autoObjectStores: [ContactObjectStore.Config, NoteObjectStore.Config]
+    })
+    const addAlice = Effect.gen(function*() {
+      const contactStore = yield* ContactObjectStore
+      return yield* contactStore.add({ name: "Alice", email: "alice@example.com", createdAt: new Date().toISOString() })
+    }).pipe(
+      Effect.provide(ContactObjectStore.WithReadWrite)
+    )
+    const addBob = Effect.gen(function*() {
+      const contactStore = yield* ContactObjectStore
+      return yield* contactStore.add({ name: "Bob", email: "bob@example.com", createdAt: new Date().toISOString() })
+    }).pipe(
+      Effect.provide(ContactObjectStore.WithReadWrite)
+    )
+    const _ = await dbRuntime.runPromise(
+      Effect.zip(addAlice, addBob)
+    )
+    const txns = await dbRuntime.runPromise(Effect.gen(function*() {
+      const db = yield* IDBDatabaseService
+      return yield* Ref.get(db.__transactionHistoryRef)
+    }))
+    expect(txns.length).toBe(2) // Should have two transactions
+    expect(txns[0].mode).toBe("readwrite") // Should be readwrite
+    expect(txns[0].storeNames).toContain("contacts") // Should include contacts
+    expect(txns[1].mode).toBe("readwrite") // Should be readwrite
+    expect(txns[1].storeNames).toContain("contacts") // Should include contacts
+  })
+  it("should handle Fresh transaction layers as separate transactions", async () => {
+    const dbRuntime = createDatabaseTestRuntime({
+      name: "freshTransactionTestDB",
+      version: 1,
+      autoObjectStores: [ContactObjectStore.Config, NoteObjectStore.Config]
+    })
+    const program = Effect.gen(function*() {
+      const contactStore = yield* ContactObjectStore
+      const result = yield* contactStore.addAsMutuals(
+        { name: "Alice", email: "alice@example.com", createdAt: new Date().toISOString() },
+        { name: "Bob", email: "bob@example.com", createdAt: new Date().toISOString() }
+      )
+      const noteStore = yield* NoteObjectStore
+      yield* noteStore.addFriendNote(
+        { content: "Hello Bob!", createdAt: new Date().getTime() },
+        result.keyB
+      )
+      return result
+    })
+    const _ = await dbRuntime.runPromise(
+      Effect.provide(
+        program,
+        Layer.mergeAll(ContactObjectStore.WithFreshReadWrite, NoteObjectStore.WithReadWrite.pipe(Layer.fresh))
+      )
+    )
+    const txns = await dbRuntime.runPromise(Effect.gen(function*() {
+      const db = yield* IDBDatabaseService
+      return yield* Ref.get(db.__transactionHistoryRef)
+    }))
+    expect(txns.length).toBe(2) // Should have two transactions
+    expect(txns[0].storeNames).not.toContain("notes") // Should only include contacts
+    expect(txns[1].storeNames).not.toContain("contacts") // Should only include notes
   })
 })
