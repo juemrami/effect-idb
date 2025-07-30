@@ -1,5 +1,12 @@
-import { Context, Data, Effect, Exit, Fiber, Layer, pipe, Ref } from "effect"
+import * as Context from "effect/Context"
+import * as Data from "effect/Data"
+import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
+import * as Fiber from "effect/Fiber"
 import type { RuntimeFiber } from "effect/Fiber"
+import { pipe } from "effect/Function"
+import * as Layer from "effect/Layer"
+import * as Ref from "effect/Ref"
 import {
   type IDBObjectStoreConfig,
   type IDBObjectStoreIndexParams,

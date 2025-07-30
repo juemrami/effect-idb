@@ -1,4 +1,4 @@
-import { ManagedRuntime } from "effect"
+import * as ManagedRuntime from "effect/ManagedRuntime"
 import { type IDBDatabaseConfig, IDBDatabaseService } from "./idbdatabase.js"
 /**
  * Creates an application-level runtime with a IndexedDB connection.

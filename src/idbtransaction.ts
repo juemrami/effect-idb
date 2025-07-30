@@ -1,4 +1,8 @@
-import { Context, Data, Effect, Layer, Ref } from "effect"
+import * as Context from "effect/Context"
+import * as Data from "effect/Data"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as Ref from "effect/Ref"
 import { IDBDatabaseService } from "./idbdatabase.js"
 import { makeObjectStoreProxyService } from "./idbobjectstore.js"
 
