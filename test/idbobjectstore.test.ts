@@ -20,7 +20,7 @@ const ContactObjectStoreConfig = {
 class ContactObjectStore extends Effect.Service<ContactObjectStore>()(
   "ContactObjectStore",
   {
-    dependencies: [IDBObjectStoreService.make(ContactObjectStoreConfig)],
+    dependencies: [IDBObjectStoreService.make(ContactObjectStoreConfig.name)],
     effect: Effect.gen(function*() {
       return yield* IDBObjectStoreService
     })
@@ -41,7 +41,7 @@ const NotesObjectStoreConfig: IDBObjectStoreConfig = {
 class NotesObjectStore extends Effect.Service<NotesObjectStore>()(
   "NotesObjectStore",
   {
-    dependencies: [IDBObjectStoreService.make(NotesObjectStoreConfig)],
+    dependencies: [IDBObjectStoreService.make(NotesObjectStoreConfig.name)],
     effect: Effect.gen(function*() {
       return yield* IDBObjectStoreService
     })

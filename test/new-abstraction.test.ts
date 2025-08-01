@@ -81,7 +81,7 @@ class NoteObjectStore extends Context.Tag("NoteObjectStore")<
     ]
   }
   static readonly Default = Layer.effect(NoteObjectStore, makeCustomNotesStoreEffect).pipe(
-    Layer.provide(IDBObjectStoreService.make(this.Config))
+    Layer.provide(IDBObjectStoreService.make(this.Config.name))
   )
   static readonly WithReadWrite = Layer.provide(
     NoteObjectStore.Default,

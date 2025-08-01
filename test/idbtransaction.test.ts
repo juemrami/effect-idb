@@ -29,7 +29,7 @@ it("should share a transaction instantiated in multiple places", async () => {
     }
     static readonly Default = Layer.effect(ContactObjectStore, makeStoreEffect).pipe(
       Layer.provide(
-        Layer.provide(IDBObjectStoreService.make(this.config), IDBTransactionService.ReadWrite)
+        Layer.provide(IDBObjectStoreService.make(this.config.name), IDBTransactionService.ReadWrite)
       )
     )
   }
@@ -49,7 +49,7 @@ it("should share a transaction instantiated in multiple places", async () => {
     {
       dependencies: [
         Layer.provide(
-          IDBObjectStoreService.make(NotesObjectStoreConfig),
+          IDBObjectStoreService.make(NotesObjectStoreConfig.name),
           IDBTransactionService.ReadWrite // this default any store access to a read-write transaction
         )
       ],

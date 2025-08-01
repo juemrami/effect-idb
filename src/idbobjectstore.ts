@@ -252,8 +252,20 @@ export const makeObjectStoreProxyService = <T = unknown>(storeName: string) =>
   Effect.gen(function*() {
     const registry = yield* TransactionRegistryService
     yield* registry.addStore(storeName)
+    const useStorePropertyEffect = Effect.fn(function*<const P extends keyof IDBObjectStore>(property: P) {
+      const store = yield* registry.useObjectStore(storeName)
+      return store[property] as IDBObjectStore[P]
+    })
     return {
+      // todo: figure out exactly what to expose on this interface
+      // The following properties can either be inferred from the config or accessed via the raw object store, but only during a transaction
+      // If inferred from config, then they cannot be expected to reflect the state of the store before the upgrade transaction.
+      // This could be okay if users are only expected to use the `autoObjectStores` and never interact with upgradeService directly,
+      // or the user is expected to not rely on these properties during the upgrade service.
       name: storeName,
+      keyPath: useStorePropertyEffect("keyPath"),
+      autoIncrement: useStorePropertyEffect("autoIncrement"),
+      indexNames: useStorePropertyEffect("indexNames"),
       add: <U = T>(value: U, key?: IDBValidKey) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
@@ -289,15 +301,11 @@ export const makeObjectStoreProxyService = <T = unknown>(storeName: string) =>
     }
   })
 
-const makeStoreServiceEffect = <T>(config: IDBObjectStoreConfig) => {
+const makeStoreServiceEffect = <T>(storeName: string) => {
   return Effect.gen(function*() {
     const transaction = yield* IDBTransactionService
-    const store = yield* transaction.objectStore<T>(config.name)
-    // todo: figure out exactly what to expose on this interface
-    return {
-      config,
-      ...store
-    }
+    const objectStoreProxy = yield* transaction.objectStore<T>(storeName)
+    return objectStoreProxy
   })
 }
 
@@ -310,7 +318,7 @@ export class IDBObjectStoreService extends Context.Tag(`${CONTEXT_PREFIX}ObjectS
   IDBObjectStoreService,
   Effect.Effect.Success<ReturnType<typeof makeStoreServiceEffect>>
 >() {
-  static make = (config: IDBObjectStoreConfig) => Layer.effect(IDBObjectStoreService, makeStoreServiceEffect(config))
+  static make = (storeName: string) => Layer.effect(IDBObjectStoreService, makeStoreServiceEffect(storeName))
 }
 
 /**
