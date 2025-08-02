@@ -1,19 +1,321 @@
 # 🚧 Work in Progress
 
-This library is currently under development.
+This library is currently under development. expect breaking changes and evolving APIs as I refine the design and functionality. Contributions and feedback are welcome!
 
-# effect-idb
+# effect-indexeddb
 
-`effect-idb` is an Effect wrapper around IndexedDB that provides better error context for local-first use cases. It leverages Effect's powerful error handling, resource management, and composability to make IndexedDB transaction operations more predictable and maintainable.
+`effect-indexeddb` is an Effect wrapper around IndexedDB that provides better error context for local-first use cases. It leverages Effect's powerful error handling, resource management, and composability to make IndexedDB transaction operations more predictable and maintainable.
+
+## Installation
+
+```bash
+pnpm add effect-indexeddb
+```
+---
+<details>
+<summary>
+
+# Quick Start
+</summary>
+
+```typescript
+import { Effect, Layer, pipe } from "effect"
+import { IDBDatabaseService, TaggedIDBObjectStoreService } from "effect-indexeddb"
+
+// Define your data interface
+interface Contact {
+  id?: number
+  name?: string
+  email: string
+  createdAt: string
+  friends?: Array<number>
+}
+
+// Create a tagged object store service
+class ContactObjectStore extends TaggedIDBObjectStoreService<ContactObjectStore, Contact>()(
+  "@app/ContactObjectStore",
+  {
+    storeConfig: {
+      name: "contacts",
+      params: {
+        keyPath: "id",
+        autoIncrement: true
+      },
+      indexes: [
+        { name: "by_name", keyPath: "name" },
+        { name: "by_email", keyPath: "email" }
+      ]
+    },
+    makeServiceEffect: (baseService) =>
+      Effect.succeed({
+        ...baseService,
+        findByEmail: (email: string) =>
+          pipe(
+            baseService.index("by_email"),
+            Effect.andThen((emailIndex) => emailIndex.get(email))
+          )
+      })
+  }
+) {}
+
+// Create a database connection layer
+const AppDatabase = IDBDatabaseService.makeLive({
+  name: "app-database",
+  version: 1,
+  autoObjectStores: [ContactObjectStore]
+})
+
+// Create a program that uses the contact store
+const program = Effect.gen(function* () {
+  const contactStore = yield* ContactObjectStore
+  
+  // Add a new contact
+  const contactId = yield* contactStore.add({
+    name: "Alice",
+    email: "alice@example.com",
+    createdAt: new Date().toISOString()
+  })
+  
+  // Find contact by email
+  const foundContact = yield* contactStore.findByEmail("alice@example.com")
+  
+  return { contactId, foundContact }
+})
+
+// Run the program with required layers
+const result = Effect.runPromise(
+  program.pipe(
+    Effect.provide(
+      Layer.provide(
+        ContactObjectStore.WithReadWrite,
+        AppDatabase
+      )
+    )
+  )
+)
+```
+
+</details>
+
+<details>
+<summary>
+
+## API Explanation
+</summary>
+
+## The Idea
+
+This library is designed to be _thought of_ as "object store first", meaning that the focus is on making it ergonomic to interact with object stores in IndexedDB. In that sense its a bit like dexie.js, but with an Effect TS api.
+
+A database connection is created and managed through an `Effect.Layer` via `IDBDatabaseService`, which a requires configuration object of type `IDBDatabaseConfig` to declare database name, version, and any object stores (and their index schemas).
+
+_`autoObjectStores` is a helper that automatically handles creating and managing object stores and their indexes based on the provided `IDBObjectStoreConfig` configuration. This library preserves the ability to open a database connection without defining any object store or even a version, but it's not covered in this README for simplicity._
+
+```typescript
+import { IDBDatabaseService } from "effect-indexeddb";
+import type { IDBObjectStoreConfig } from "effect-indexeddb";
+
+const MyDatabaseLayer = IDBDatabaseService.makeLive({
+  name: "my-database",
+  version: 1,
+  autoObjectStores: [
+    UserStoreConfig
+  ],
+});
+
+const UserStoreConfig: IDBObjectStoreConfig = {
+  name: "users",
+  params: { keyPath: "id", autoIncrement: true },
+  indexes: [
+    { name: "email", keyPath: "email", options: { unique: true } },
+    { name: "name", keyPath: "name" }
+  ]
+};
 
 
-## Features (Planned)
+```
+Note that as with all Effects, this `MyDatabaseLayer` is lazy constructor for the database connection here. Simply creating the layer does not open the database, just a blueprint for how to open it later.
 
-- 🔒 Type-safe database operations
-- 🎯 Effect-based error handling
-- 📦 Resource management with automatic cleanup
-- 🔄 Transaction support
-- 📊 Schema validation
+To describe a transaction effect on our defined object store, we can use the `IDBTransactionService` to access to the object store service:
+
+```typescript
+import { IDBObjectStoreService } from "effect-indexeddb";
+
+// Effect requires a `IDBTransactionService`, which itself requires a `IDBDatabaseService`
+const addAlice = Effect.gen(function* () {
+  const transaction = yield* IDBTransactionService
+  const userStore = yield* transaction.objectStore<{
+    id: number; // generated by autoIncrement
+    name: string;
+    email: string;
+  }>(UserStoreConfig.name);
+  yield* userStore.add({ name: "Alice", email: "alice@example.com" });
+})
+
+```
+Finally, to run this transaction effect, you would need to provide the Requirements of:
+  - `IDBDatabaseService` - the db connection layer
+  - `IDBTransactionService` - the transaction scope layer.
+
+`IDBTransactionService` comes with 2 default layers, `.ReadOnly` and `.ReadWrite`
+
+_The transaction service can be provided in a multitude of ways, such as the helpers in `TaggedIDBObjectStoreService`.
+You only need to provide a single transaction service per transaction effect._
+```typescript
+const result = Effect.runPromiseExit(
+  addAlice.pipe(
+    Effect.provide(
+      Layer.provide(
+        IDBTransactionService.ReadWrite
+        MyDatabaseLayer
+      )
+    )
+  )
+);
+```
+
+## Creating Tagged Object Stores
+
+As mentioned, the library is designed to be object store first. To facilitate this, you can create a tagged object store services which makes it easier to create methods that operate on multiple object stores. Or even to extends the base `IDBObjectStoreService` with additional methods on a per object store basis.
+
+### Using `TaggedIDBObjectStoreService` service class
+
+Instantiation API is similar to `Effect.Service` class, except we can pass an optional *type generic argument* after the class name to `TaggedIDBObjectStoreService<ClassName, >()` that defines the shape of the objects in the object store.
+
+You can also define of the service's consumer shape itself, dynamically (as with `Effect.Service`), via the required `makeServiceEffect` function, which receives the base `IDBObjectStoreService` and expects an `Effect` which succeeds with the final service shape, possibly with additional methods or overrides from the base.
+
+```typescript
+import { Effect, Layer, pipe } from "effect";
+import { IDBDatabaseService, TaggedIDBObjectStoreService } from "effect-indexeddb";
+
+// Define some custom object stores for your IndexedDB database
+interface Contact {
+  id?: number
+  name?: string
+  email: string
+  createdAt: string
+  friends?: Array<number>
+}
+
+class ContactObjectStore extends TaggedIDBObjectStoreService<ContactObjectStore, Contact>()(
+  "@app/ContactObjectStore",
+  {
+    storeConfig: {
+      name: "contacts",
+      params: {
+        keyPath: "id",
+        autoIncrement: true
+      },
+      indexes: [
+        { name: "by_name", keyPath: "name" },
+        { name: "by_email", keyPath: "email" }
+      ]
+    },
+    makeServiceEffect: (baseService) =>
+      Effect.succeed({
+        ...baseService,
+        findByEmail: (email: string) =>
+          pipe(
+            baseService.index("by_email"),
+            Effect.andThen((emailIndex) => emailIndex.get(email))
+          ),
+        addAsMutuals: (contactA: Contact, contactB: Contact) =>
+          Effect.gen(function*() {
+            const keyA = yield* baseService.add(contactA)
+            const friends = new Set(contactB.friends)
+            friends.add(keyA as number)
+            const keyB = yield* baseService.add({ ...contactB, friends: Array.from(friends) })
+            yield* baseService.put({ ...contactA, id: keyA, friends: [keyB] })
+            return { keyA: keyA as number, keyB: keyB as number }
+          })
+      })
+  }
+) {}
+```
+The `TaggedIDBObjectStoreService` class provides a couple of default layers and properties for convenience:
+- `Config`: alias to the configuration object passed to `storeConfig` in the constructor.
+- `Default`: A layer that provides the object store service with no underlying transaction service.
+- `WithReadOnly`: A layer that provides the object store service with a provided read-only transaction service.
+- `WithReadWrite`: A layer that provides the object store service with a provided read-write transaction service.
+
+```typescript
+const AppDatabase = IDBDatabaseService.makeLive({
+  name: "app-database",
+  version: 1,
+  // Auto object stores will have any added or removed indexes automatically managed across versions.
+  // *Interface also accepts and object with a `Config` property of type `IDBObjectStoreConfig`*
+  autoObjectStores: [ContactObjectStore]
+})
+
+const program = Effect.gen(function* () {
+  const contactStore = yield* ContactObjectStore
+  const alice = { name: "Alice", email: "alice@example.com", createdAt: new Date().toISOString() }
+  const bob = { name: "Bob", email: "bob@example.com", createdAt: new Date().toISOString() }
+  yield* contactStore.addAsMutuals(alice, bob)
+})
+
+const result = Effect.runPromiseExit(
+  program.pipe(
+    Effect.provide(
+      Layer.provide(
+        ContactObjectStore.WithReadWrite,
+        AppDatabase
+      )
+    )
+  )
+);
+```
+
+
+### Using `IDBObjectStoreService` + `Effect.Context`
+
+The `IDBObjectStoreService` is a base service that provides a generic interface for interacting with an IndexedDB object store. It allows you to perform CRUD operations on the object store, and can be extended or used directly. This is the same service that the `TaggedIDBObjectStoreService` uses under the hood.
+
+```typescript
+import { IDBObjectStoreService } from "effect-indexeddb";
+import type { IDBObjectStoreConfig } from "effect-indexeddb";
+
+const makeServiceEffect = Effect.gen(function* () {
+  const baseService = yield* IDBObjectStoreService
+  return baseService;
+});
+
+class UserObjectStore extends Context.Tagged("UserObjectStore")<
+UserObjectStore,
+Effect.Effect.Success<typeof makeServiceEffect>,
+>(){
+  static readonly Config: IDBObjectStoreConfig = {
+  name: "users",
+  params: { keyPath: "id", autoIncrement: true },
+  indexes: [
+    { name: "by_email", keyPath: "email", options: { unique: true } },
+    { name: "by_name", keyPath: "name" }
+  ]
+};
+
+  static readonly Default = Layer.effect(UserObjectStore, makeServiceEffect).pipe(
+    Layer.provide(IDBObjectStoreService.make(this.Config.name))
+  );
+
+  static readonly WithReadOnly = Layer.provide(
+    this.Default,
+    IDBTransactionService.ReadOnly
+  );
+
+  static readonly WithReadWrite = Layer.provide(
+    this.Default,
+    IDBTransactionService.ReadWrite
+  );
+}
+```
+</details>
+
+## Planned Features
+
+- 🔒 Type-safe object store operations
+  - todo: object store index name auto-completion
+- 📊 Effect Schema support
+- 🎯 IDBCursor support
 
 ## Development
 
