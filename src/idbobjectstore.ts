@@ -12,12 +12,7 @@ export type IDBObjectStoreIndexParams =
     name: string
     keyPath: Array<string>
     options?: {
-      /** `keyPath` is an array, so `multiEntry` mu): (new () => Self) & Context.Tag<Self, Effect.Effect.Success<any>> & {
-  Config: IDBObjectStoreConfig
-  Default: Layer.Layer<Self, any, any>
-  WithReadWrite: Layer.Layer<Self, any, any>
-  WithReadOnly: Layer.Layer<Self, any, any>
-} {false or omitted */
+      /** `keyPath` is an array, so `multiEntry` must be false or omitted */
       multiEntry?: false
       unique?: boolean
     }
@@ -31,15 +26,6 @@ export type IDBObjectStoreIndexParams =
       unique?: boolean
     }
   }
-export type IDBObjectStoreIndexParams1<T> = {
-  name: string
-  keyPath: T extends string | Array<string> ? T : never
-  options?: {
-    /** when `keyPath` is an array `multiEntry` must be false or omitted */
-    multiEntry?: T extends Array<string> ? false : boolean
-    unique?: boolean
-  }
-}
 
 // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/add#exceptions
 const ObjectStoreAddExceptionType = [
@@ -111,6 +97,13 @@ const ObjectStoreDeleteExceptionType = [
 ] as const
 type ObjectStoreDeleteExceptionType = typeof ObjectStoreDeleteExceptionType[number]
 
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/index#exceptions
+const ObjectStoreIndexExceptionType = [
+  "InvalidStateError", // Thrown if the object store has been deleted or transaction is inactive.
+  "NotFoundError" // Thrown if the index does not exist (case-sensitive).
+] as const
+type ObjectStoreIndexExceptionType = typeof ObjectStoreIndexExceptionType[number]
+
 type ObjectStoreOperationExceptionType =
   | ObjectStoreAddExceptionType
   | ObjectStoreClearExceptionType
@@ -118,6 +111,7 @@ type ObjectStoreOperationExceptionType =
   | ObjectStoreGetExceptionType
   | ObjectStoreGetAllExceptionType
   | ObjectStoreDeleteExceptionType
+  | ObjectStoreIndexExceptionType
 
 // Note: TypeError is not included as it's not a DOMException but a JavaScript Error type
 interface TypedDOMException<T extends ObjectStoreOperationExceptionType = ObjectStoreOperationExceptionType>
@@ -132,7 +126,7 @@ const isKnownDOMException = <T extends ReadonlyArray<ObjectStoreOperationExcepti
   return error instanceof DOMException && (knownNames as ReadonlyArray<string>).includes(error.name)
 }
 
-type ServiceOperations = "add" | "put" | "get" | "getAll" | "delete" | "clear"
+type ServiceOperations = "add" | "put" | "get" | "getAll" | "delete" | "clear" | "index"
 export class IDBObjectStoreOperationError extends Data.TaggedError("IDBObjectStoreOperationError")<{
   readonly operation: ServiceOperations
   readonly message: string
@@ -211,6 +205,212 @@ const matchObjectStoreError = (
   }
   return null
 }
+
+type IndexServiceOperations = "get" | "getAll" | "count" | "getKey" | "getAllKeys"
+
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBIndex/count#exceptions
+const IndexCountExceptionType = [
+  "TransactionInactiveError", // Thrown if this IDBIndex's transaction is inactive.
+  "DataError", // Thrown if the key or key range provided contains an invalid key.
+  "InvalidStateError" // Thrown if the IDBIndex has been deleted or removed.
+] as const
+type IndexCountExceptionType = typeof IndexCountExceptionType[number]
+
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBIndex/get#exceptions
+const IndexGetExceptionType = [
+  "TransactionInactiveError", // Thrown if this IDBIndex's transaction is inactive.
+  "DataError", // Thrown if the key or key range provided contains an invalid key.
+  "InvalidStateError" // Thrown if the IDBIndex has been deleted or removed.
+] as const
+type IndexGetExceptionType = typeof IndexGetExceptionType[number]
+
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBIndex/getAll#exceptions
+const IndexGetAllExceptionType = [
+  "TransactionInactiveError", // Thrown if this IDBIndex's transaction is inactive.
+  "InvalidStateError" // Thrown if the IDBIndex has been deleted or removed.
+] as const
+type IndexGetAllExceptionType = typeof IndexGetAllExceptionType[number]
+// Note: TypeError is also possible if count parameter is not between 0 and 2^32 - 1 included.
+
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBIndex/getKey#exceptions
+const IndexGetKeyExceptionType = [
+  "TransactionInactiveError", // Thrown if this IDBIndex's transaction is inactive.
+  "DataError", // Thrown if the key or key range provided contains an invalid key.
+  "InvalidStateError" // Thrown if the IDBIndex has been deleted or removed.
+] as const
+type IndexGetKeyExceptionType = typeof IndexGetKeyExceptionType[number]
+
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBIndex/getAllKeys#exceptions
+const IndexGetAllKeysExceptionType = [
+  "TransactionInactiveError", // Thrown if this IDBIndex's transaction is inactive.
+  "InvalidStateError" // Thrown if the IDBIndex has been deleted or removed.
+] as const
+type IndexGetAllKeysExceptionType = typeof IndexGetAllKeysExceptionType[number]
+// Note: TypeError is also possible if count parameter is not between 0 and 2^32 - 1 included.
+
+type IndexOperationExceptionType =
+  | IndexCountExceptionType
+  | IndexGetExceptionType
+  | IndexGetAllExceptionType
+  | IndexGetKeyExceptionType
+  | IndexGetAllKeysExceptionType
+
+export class IDBObjectStoreIndexOperationError extends Data.TaggedError("IDBObjectStoreIndexOperationError")<{
+  readonly operation: IndexServiceOperations
+  readonly message: string
+  readonly cause: TypeError | TypedDOMException<IndexOperationExceptionType>
+}> {}
+
+const matchStoreIndexError = (
+  error: unknown,
+  operation: IndexServiceOperations,
+  isAsync: boolean = false
+): IDBObjectStoreIndexOperationError | null => {
+  const syncText = isAsync ? "Async" : "Sync"
+  switch (operation) {
+    case "get":
+      if (isKnownDOMException(error, IndexGetExceptionType)) {
+        return new IDBObjectStoreIndexOperationError({
+          operation,
+          message: `${syncText} error getting value from index. ${error}`,
+          cause: error as TypedDOMException<IndexGetExceptionType>
+        })
+      }
+      break
+    case "getAll":
+      if (isKnownDOMException(error, IndexGetAllExceptionType)) {
+        return new IDBObjectStoreIndexOperationError({
+          operation,
+          message: `${syncText} error getting all values from index. ${error}`,
+          cause: error as TypedDOMException<IndexGetAllExceptionType>
+        })
+      }
+      // Special case: getAll can throw TypeError for invalid count parameter (not a DOMException)
+      if (error instanceof TypeError) {
+        return new IDBObjectStoreIndexOperationError({
+          operation,
+          message: `${syncText} error getting all values from index. ${error}`,
+          cause: error
+        })
+      }
+      break
+    case "getKey":
+      if (isKnownDOMException(error, IndexGetKeyExceptionType)) {
+        return new IDBObjectStoreIndexOperationError({
+          operation,
+          message: `${syncText} error getting key from index. ${error}`,
+          cause: error as TypedDOMException<IndexGetKeyExceptionType>
+        })
+      }
+      break
+    case "getAllKeys":
+      if (isKnownDOMException(error, IndexGetAllKeysExceptionType)) {
+        return new IDBObjectStoreIndexOperationError({
+          operation,
+          message: `${syncText} error getting all keys from index. ${error}`,
+          cause: error as TypedDOMException<IndexGetAllKeysExceptionType>
+        })
+      }
+      // Special case: getAllKeys can throw TypeError for invalid count parameter (not a DOMException)
+      if (error instanceof TypeError) {
+        return new IDBObjectStoreIndexOperationError({
+          operation,
+          message: `${syncText} error getting all keys from index. ${error}`,
+          cause: error
+        })
+      }
+      break
+    case "count":
+      if (isKnownDOMException(error, IndexCountExceptionType)) {
+        return new IDBObjectStoreIndexOperationError({
+          operation,
+          message: `${syncText} error counting values in index. ${error}`,
+          cause: error as TypedDOMException<IndexCountExceptionType>
+        })
+      }
+      break
+    default:
+      // Unknown operation, cannot match error
+  }
+  return null
+}
+
+const useRawIndexRequest = <T>(indexRequest: () => IDBRequest<T>, operation: IndexServiceOperations) =>
+  Effect.gen(function*() {
+    const request = yield* Effect.try({
+      try: indexRequest,
+      catch: (err) => {
+        const matched = matchStoreIndexError(err, operation)
+        if (matched === null) throw err // cause defect on unknown errors
+        return matched
+      }
+    })
+    return yield* Effect.async<T, IDBObjectStoreIndexOperationError>((resume) => {
+      request.onsuccess = (event) => {
+        resume(Effect.succeed((event.target as IDBRequest<T>).result))
+      }
+
+      request.onerror = (event) => {
+        const error = (event.target as IDBRequest<T>).error
+        const matched = matchStoreIndexError(error, operation)
+        if (matched !== null) {
+          resume(Effect.fail(matched))
+        }
+        // unknown errors are defects
+        resume(Effect.die(error))
+      }
+    })
+  })
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBIndex
+const makeIndexServiceEffect = <U = unknown>(rawStore: IDBObjectStore, indexName: string) =>
+  Effect.gen(function*() {
+    const rawIndex = yield* Effect.try({
+      try: () => rawStore.index(indexName),
+      catch: (err) => {
+        const matched = matchObjectStoreError(err, "index")
+        if (matched === null) throw err // cause defect on unknown errors
+        return matched
+      }
+    })
+    return {
+      name: rawIndex.name,
+      keyPath: rawIndex.keyPath,
+      multiEntry: rawIndex.multiEntry,
+      unique: rawIndex.unique,
+      get: <T = U>(key: IDBValidKey | IDBKeyRange) =>
+        useRawIndexRequest<T | undefined>(
+          () => rawIndex.get(key),
+          "get"
+        ),
+      getAll: <T = U>(query?: IDBKeyRange, count?: number) =>
+        useRawIndexRequest<Array<T>>(
+          () => rawIndex.getAll(query, count),
+          "getAll"
+        ),
+      count: (key?: IDBValidKey | IDBKeyRange) =>
+        useRawIndexRequest(
+          () => rawIndex.count(key),
+          "count"
+        ),
+      getKey: (query: IDBValidKey | IDBKeyRange) =>
+        useRawIndexRequest(
+          () => rawIndex.getKey(query),
+          "getKey"
+        ),
+      getAllKeys: (query?: IDBKeyRange, count?: number) =>
+        useRawIndexRequest(
+          () => rawIndex.getAllKeys(query, count),
+          "getAllKeys"
+        )
+      // todo: openCursor, openKeyCursor
+    }
+  })
+// class IDBIndexService extends Context.Tag(`${CONTEXT_PREFIX}IDBIndexService`)<
+//   IDBIndexService,
+//   Effect.Effect.Success<ReturnType<typeof makeIndexServiceEffect>>
+// >() {
+//   static readonly make = makeIndexServiceEffect
+// }
 
 /**
  * Wraps an IndexedDB request in an Effect that handles the async completion automatically.
@@ -297,6 +497,12 @@ export const makeObjectStoreProxyService = <T = unknown>(storeName: string) =>
           const store = yield* registry.useObjectStore(storeName)
           return yield* useRawStoreRequest(store.delete.bind(store, key), "delete")
           // .pipe(Effect.andThen(() => true)) // Convert void result to boolean
+        }),
+      index: (indexName: string) =>
+        Effect.gen(function*() {
+          const store = yield* registry.useObjectStore(storeName)
+          const indexService = yield* makeIndexServiceEffect<T>(store, indexName)
+          return indexService
         })
     }
   })
