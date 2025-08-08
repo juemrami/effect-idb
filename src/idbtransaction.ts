@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Ref from "effect/Ref"
 import { IDBDatabaseService } from "./idbdatabase.js"
+import type { IDBObjectStoreConfig } from "./idbobjectstore.js"
 import { makeObjectStoreProxyService } from "./idbobjectstore.js"
 
 const CONTEXT_PREFIX = "/src/idbtransaction:"
@@ -159,9 +160,12 @@ const makeTransactionService = (permissions: "readonly" | "readwrite") =>
           return yield* cb(txn)
         })
       },
-      objectStore: <T>(storeName: string) =>
+      objectStore: <
+        StoreShape = unknown,
+        Config extends IDBObjectStoreConfig = IDBObjectStoreConfig
+      >(storeName: string) =>
         Effect.gen(function*() {
-          return yield* makeObjectStoreProxyService<T>(storeName).pipe(
+          return yield* makeObjectStoreProxyService<Config, StoreShape>(storeName).pipe(
             Effect.provideService(TransactionRegistryService, registry)
           )
         })

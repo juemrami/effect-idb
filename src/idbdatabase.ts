@@ -226,7 +226,7 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
             yield* createObjectStore(
               storeConfig.name,
               storeConfig.params,
-              storeConfig.indexes ?? []
+              storeConfig.indexes
             )
           }
         }))

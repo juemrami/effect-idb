@@ -7,26 +7,6 @@ import { IDBTransactionService, TransactionRegistryService } from "./idbtransact
 
 const CONTEXT_PREFIX = "/src/idbobjectstore:"
 
-export type IDBObjectStoreIndexParams =
-  | {
-    name: string
-    keyPath: Array<string>
-    options?: {
-      /** `keyPath` is an array, so `multiEntry` must be false or omitted */
-      multiEntry?: false
-      unique?: boolean
-    }
-  }
-  | {
-    name: string
-    keyPath: string
-    options?: {
-      /** `keyPath` is an array, so `multiEntry` must be false or omitted */
-      multiEntry?: boolean
-      unique?: boolean
-    }
-  }
-
 // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/add#exceptions
 const ObjectStoreAddExceptionType = [
   "ReadOnlyError", // Thrown if the transaction associated with this operation is in read-only mode.
@@ -447,8 +427,44 @@ const useRawStoreRequest = <T>(
     })
   })
 }
+
+export interface IDBObjectStoreConfig {
+  readonly name: string
+  readonly params: IDBObjectStoreParameters
+  readonly indexes: Array<IDBObjectStoreIndexParams>
+}
+
+export type IDBObjectStoreIndexParams =
+  | {
+    name: string
+    keyPath: Array<string>
+    options?: {
+      /** `keyPath` is an array, so `multiEntry` must be false or omitted */
+      multiEntry?: false
+      unique?: boolean
+    }
+  }
+  | {
+    name: string
+    keyPath: string
+    options?: {
+      /** `keyPath` is an array, so `multiEntry` must be false or omitted */
+      multiEntry?: boolean
+      unique?: boolean
+    }
+  }
+
+type IdxFromConfig<C> = C extends { indexes: ReadonlyArray<infer I> } ? I extends { name: infer N } ? N
+  : never
+  : never
+
 // used by the transaction service to create a Effect wrappers around the object methods
-export const makeObjectStoreProxyService = <T = unknown>(storeName: string) =>
+export const makeObjectStoreProxyService = <
+  Config extends { indexes: ReadonlyArray<{ name: string }> },
+  StoreShape
+>(
+  storeName: string
+) =>
   Effect.gen(function*() {
     const registry = yield* TransactionRegistryService
     yield* registry.addStore(storeName)
@@ -466,7 +482,7 @@ export const makeObjectStoreProxyService = <T = unknown>(storeName: string) =>
       keyPath: useStorePropertyEffect("keyPath"),
       autoIncrement: useStorePropertyEffect("autoIncrement"),
       indexNames: useStorePropertyEffect("indexNames"),
-      add: <U = T>(value: U, key?: IDBValidKey) =>
+      add: <U = StoreShape>(value: U, key?: IDBValidKey) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
           const request = useRawStoreRequest(store.add.bind(store, value, key), "add")
@@ -477,17 +493,17 @@ export const makeObjectStoreProxyService = <T = unknown>(storeName: string) =>
           const store = yield* registry.useObjectStore(storeName)
           return yield* useRawStoreRequest(store.clear.bind(store), "clear")
         }),
-      put: <U = T>(value: U, key?: IDBValidKey) =>
+      put: <U = StoreShape>(value: U, key?: IDBValidKey) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
           return yield* useRawStoreRequest(store.put.bind(store, value, key), "put")
         }),
-      get: <U = T>(key: IDBValidKey) =>
+      get: <U = StoreShape>(key: IDBValidKey) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
           return yield* useRawStoreRequest<U | undefined>(store.get.bind(store, key), "get")
         }),
-      getAll: <U = T>(query?: IDBKeyRange, count?: number) =>
+      getAll: <U = StoreShape>(query?: IDBKeyRange, count?: number) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
           return yield* useRawStoreRequest<Array<U>>(store.getAll.bind(store, query, count), "getAll")
@@ -498,27 +514,23 @@ export const makeObjectStoreProxyService = <T = unknown>(storeName: string) =>
           return yield* useRawStoreRequest(store.delete.bind(store, key), "delete")
           // .pipe(Effect.andThen(() => true)) // Convert void result to boolean
         }),
-      index: (indexName: string) =>
+      index: (indexName: IdxFromConfig<Config>) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
-          const indexService = yield* makeIndexServiceEffect<T>(store, indexName)
+          const indexService = yield* makeIndexServiceEffect<StoreShape>(store, indexName)
           return indexService
         })
     }
   })
 
-const makeStoreServiceEffect = <T>(storeName: string) => {
+const makeStoreServiceEffect = <
+  StoreShape
+>(storeName: string) => {
   return Effect.gen(function*() {
     const transaction = yield* IDBTransactionService
-    const objectStoreProxy = yield* transaction.objectStore<T>(storeName)
+    const objectStoreProxy = yield* transaction.objectStore<StoreShape>(storeName)
     return objectStoreProxy
   })
-}
-
-export type IDBObjectStoreConfig = {
-  name: string
-  params: IDBObjectStoreParameters
-  indexes: Array<IDBObjectStoreIndexParams>
 }
 export class IDBObjectStoreService extends Context.Tag(`${CONTEXT_PREFIX}ObjectStoreService`)<
   IDBObjectStoreService,
@@ -526,6 +538,12 @@ export class IDBObjectStoreService extends Context.Tag(`${CONTEXT_PREFIX}ObjectS
 >() {
   static make = (storeName: string) => Layer.effect(IDBObjectStoreService, makeStoreServiceEffect(storeName))
 }
+
+type MakeFromArgs<Args> = Args extends
+  { readonly makeServiceEffect: (baseService: any) => Effect.Effect<infer _A, infer _E, infer _R> } ? {
+    readonly effect: Effect.Effect<_A, _E, _R | IDBTransactionService>
+  } :
+  never
 
 /**
  * Creates a tagged IDB object store service layer with self-contained configuration and extensible methods.
@@ -560,9 +578,8 @@ export const TaggedIDBObjectStoreService: <
   const Key extends string,
   const Config extends IDBObjectStoreConfig,
   const Args extends {
-    readonly storeConfig: Config
     readonly makeServiceEffect: (
-      baseService: Effect.Effect.Success<ReturnType<typeof makeObjectStoreProxyService<DataShape>>>
+      baseService: Effect.Effect.Success<ReturnType<typeof makeObjectStoreProxyService<Config, DataShape>>>
     ) => Effect.Effect<Effect.Service.AllowedType<Key, MakeFromArgs<Args>>, any, any>
   },
   const Make extends MakeFromArgs<Args>,
@@ -571,7 +588,12 @@ export const TaggedIDBObjectStoreService: <
     Effect.Service.MakeError<Make>,
     Exclude<Effect.Service.MakeContext<Make>, IDBTransactionService>
   >
->(key: Key, options: Args) => Effect.Service.Class<Self, Key, Make> & {
+>(
+  key: Key,
+  options: Args & {
+    readonly storeConfig: Config
+  }
+) => Effect.Service.Class<Self, Key, Make> & {
   readonly Config: Config
   readonly WithReadWrite: LayerWithTransaction
   readonly WithReadOnly: LayerWithTransaction
@@ -580,7 +602,7 @@ export const TaggedIDBObjectStoreService: <
 } = <Self, DataShape>() => (key, options) => {
   const serviceEffect = Effect.gen(function*() {
     const txn = yield* IDBTransactionService
-    const baseService = yield* txn.objectStore<DataShape>(options.storeConfig.name)
+    const baseService = yield* txn.objectStore<DataShape, typeof options.storeConfig>(options.storeConfig.name)
     return yield* options.makeServiceEffect(baseService)
   })
 
@@ -623,8 +645,3 @@ export const TaggedIDBObjectStoreService: <
   })
   return TagClass as any
 }
-type MakeFromArgs<Args> = Args extends
-  { readonly makeServiceEffect: (baseService: any) => Effect.Effect<infer _A, infer _E, infer _R> } ? {
-    readonly effect: Effect.Effect<_A, _E, _R | IDBTransactionService>
-  } :
-  never
