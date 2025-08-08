@@ -122,7 +122,7 @@ describe("User Extended Object Store Service Tests", () => {
     const dbRuntime = createDatabaseTestRuntime({
       name: "customBatchTestDB",
       version: 1,
-      autoObjectStores: [ContactObjectStore.Config, NoteObjectStore.Config]
+      autoObjectStores: [ContactObjectStore, NoteObjectStore]
     })
     const program = Effect.gen(function*() {
       const contactStore = yield* ContactObjectStore

@@ -184,8 +184,10 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
     /** Automatically generate defined object stores and their indexes. Destructively validates index configurations. */
     autoGenerateObjectStores: Effect.gen(function*() {
       // Create all object stores if they don't exist
-      yield* Effect.forEach(config.autoObjectStores ?? [], (storeConfig) =>
+      yield* Effect.forEach(config.autoObjectStores ?? [], (store) =>
         Effect.gen(function*() {
+          const storeConfig = "Config" in store ? store.Config : store
+          // if the store config is a layer, extract the config
           // check if store already exists & perform any index migrations if so
           if (db.objectStoreNames.contains(storeConfig.name)) {
             const store = yield* getRawObjectStoreFromRawTransactionEffect(upgradeTxn, storeConfig.name)
@@ -241,7 +243,7 @@ export type IDBDatabaseConfig = {
    */
   version?: number
   /** Array of object store configurations include in the auto upgrade process of `upgradeService.autoGenerateObjectStores` */
-  autoObjectStores?: Array<IDBObjectStoreConfig>
+  autoObjectStores?: Array<IDBObjectStoreConfig | { Config: IDBObjectStoreConfig }>
   /** `Record` of effects for each database version describing any schema changes (object stores name and their indices). \
    * If an effect is not provided for a version, the upgrade service will automatically create any object stores
    * defined in `autoObjectStores` via `upgradeService.autoGenerateObjectStores()`. \
