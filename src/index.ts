@@ -1,4 +1,11 @@
 export {
+  IDBIndexCountError,
+  IDBIndexGetAllError,
+  IDBIndexGetAllKeysError,
+  IDBIndexGetError,
+  IDBIndexGetKeyError
+} from "./errors.js"
+export {
   type IDBDatabaseConfig,
   IDBDatabaseObjectStoreCreationError,
   IDBDatabaseObjectStoreDeletionError,
