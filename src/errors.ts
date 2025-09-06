@@ -1,5 +1,5 @@
 import { Data, Match } from "effect"
-import type { IndexServiceOperations } from "./idbobjectstore.js"
+import type { IndexServiceOperations, StoreServiceOperations } from "./idbobjectstore.js"
 
 export const isKnownDOMException = <T extends ReadonlyArray<string>>(
   error: unknown,
@@ -162,5 +162,186 @@ export const IDBIndexOperationErrorMap = {
       Match.exhaustive
     )(operation)
     return Err.fromUnknown(error, isFromRequest) as IDBIndexOperationErrorMap[Op] | null
+  }
+}
+
+/*******************************************************************************
+ * IDBObjectStore Errors
+ *******************************************************************************/
+
+export const StoreOpValidExceptionNames = {
+  // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/add#exceptions
+  add: [
+    "ReadOnlyError", // Thrown if the transaction associated with this operation is in read-only mode.
+    "TransactionInactiveError", // Thrown if this IDBObjectStore's transaction is inactive.
+    "DataError", // Thrown if: object store uses in-line keys or has key generator and key parameter was provided; object store uses out-of-line keys and has no key generator and no key parameter was provided; object store uses in-line keys but no key generator and the object store's key path does not yield a valid key; key parameter was provided but does not contain a valid key.
+    "InvalidStateError", // Thrown if the IDBObjectStore has been deleted or removed.
+    "DataCloneError", // Thrown if the data being stored could not be cloned by the internal structured cloning algorithm.
+    "ConstraintError" // Thrown if an insert operation failed because the primary key constraint was violated (due to an already existing record with the same primary key value).
+  ] as const,
+  // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/put#exceptions
+  // NOTE: MDN docs are incomplete - runtime errors from backend are not predictable
+  put: [
+    "ReadOnlyError", // Thrown if the transaction associated with this operation is in read-only mode.
+    "TransactionInactiveError", // Thrown if this IDBObjectStore's transaction is inactive.
+    "DataError", // Thrown if: object store uses in-line keys or has key generator and key parameter was provided; object store uses out-of-line keys and has no key generator and no key parameter was provided; object store uses in-line keys but no key generator and the object store's key path does not yield a valid key; key parameter was provided but does not contain a valid key.
+    "InvalidStateError", // Thrown if the IDBObjectStore has been deleted or removed.
+    "DataCloneError" // Thrown if the data being stored could not be cloned by the internal structured cloning algorithm.
+  ] as const,
+  // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/get#exceptions
+  get: [
+    "TransactionInactiveError", // Thrown if this IDBObjectStore's transaction is inactive.
+    "DataError", // Thrown if key or key range provided contains an invalid key.
+    "InvalidStateError" // Thrown if the IDBObjectStore has been deleted or removed.
+  ] as const,
+  // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/getAll#exceptions
+  // Note: TypeError is also possible if count parameter is not between 0 and 2^32 - 1 included.
+  getAll: [
+    "TransactionInactiveError", // Thrown if this IDBObjectStore's transaction is inactive.
+    "DataError", // Thrown if key or key range provided contains an invalid key or is null.
+    "InvalidStateError" // Thrown if the IDBObjectStore has been deleted or removed.
+  ] as const,
+  // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/delete#exceptions
+  delete: [
+    "TransactionInactiveError", // Thrown if this object store's transaction is inactive.
+    "ReadOnlyError", // Thrown if the object store's transaction mode is read-only.
+    "InvalidStateError", // Thrown if the object store has been deleted.
+    "DataError" // Thrown if key is not a valid key or a key range.
+  ] as const,
+  // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/clear#exceptions
+  clear: [
+    "InvalidStateError", // Thrown if the object store has been deleted.
+    "ReadOnlyError", // Thrown if the transaction associated with this operation is in read-only mode.
+    "TransactionInactiveError" // Thrown if this IDBObjectStore's transaction is inactive.
+  ] as const,
+  // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/index#exceptions
+  index: [
+    "InvalidStateError", // Thrown if the object store has been deleted or transaction is inactive.
+    "NotFoundError" // Thrown if the index does not exist (case-sensitive).
+  ] as const
+} satisfies Record<StoreServiceOperations, ReadonlyArray<string>>
+
+type StoreOpExceptionNames<Op extends StoreServiceOperations> = typeof StoreOpValidExceptionNames[Op][number]
+export type StoreOperationExceptions<
+  Op extends StoreServiceOperations
+> = Op extends "getAll" ? DomException<StoreOpExceptionNames<Op>> | TypeError
+  : DomException<StoreOpExceptionNames<Op>>
+
+type StoreErrorProps<Op extends StoreServiceOperations> = {
+  readonly operation: Op
+  readonly message: string
+  readonly cause: StoreOperationExceptions<Op>
+}
+
+function storeErrPropsFromUnknown<const Op extends StoreServiceOperations>(
+  error: unknown,
+  operation: Op,
+  isFromRequest: boolean = false
+): StoreErrorProps<Op> | null {
+  // todo: better handling for errors sourcing from requests, for now process same as sync method errors.
+  if (
+    (isKnownDOMException(error, StoreOpValidExceptionNames[operation]))
+    || (operation === "getAll" && error instanceof TypeError)
+  ) {
+    const syncText = isFromRequest ? "Async Request" : "Sync Method"
+    const message = Match.type<StoreServiceOperations>().pipe(
+      Match.when("add", () => `${syncText} error adding value to object store. ${error}`),
+      Match.when("put", () => `${syncText} error putting value in object store. ${error}`),
+      Match.when("get", () => `${syncText} error getting value from object store. ${error}`),
+      Match.when("getAll", () => `${syncText} error getting all values from object store. ${error}`),
+      Match.when("delete", () => `${syncText} error deleting value from object store. ${error}`),
+      Match.when("clear", () => `${syncText} error clearing object store. ${error}`),
+      Match.when("index", () => `${syncText} error accessing index on object store. ${error}`),
+      Match.exhaustive
+    )(operation)
+    return {
+      operation,
+      message,
+      cause: error as StoreOperationExceptions<Op>
+    }
+  }
+  return null
+}
+
+const TaggedStoreError =
+  <Self>() =>
+  <const Op extends StoreServiceOperations, const Tag extends string>({ operation, tag }: {
+    tag: Tag
+    operation: Op
+  }) => {
+    const ErrClass = Data.TaggedError(tag)
+    Object.defineProperty(ErrClass, "fromUnknown", {
+      get(this) {
+        return (error: unknown, isFromRequest: boolean = false) => {
+          const props = storeErrPropsFromUnknown(error, operation, isFromRequest)
+          if (props) return new ErrClass<StoreErrorProps<Op>>(props) as Self
+          return null
+        }
+      }
+    })
+    return ErrClass as unknown as typeof ErrClass<StoreErrorProps<Op>> & {
+      readonly fromUnknown: (
+        error: unknown,
+        isFromRequest?: boolean
+      ) => Self | null
+    }
+  }
+
+export class IDBObjectStoreAddError extends TaggedStoreError<IDBObjectStoreAddError>()({
+  tag: "IDBObjectStoreAddError",
+  operation: "add"
+}) {}
+export class IDBObjectStorePutError extends TaggedStoreError<IDBObjectStorePutError>()({
+  tag: "IDBObjectStorePutError",
+  operation: "put"
+}) {}
+export class IDBObjectStoreGetError extends TaggedStoreError<IDBObjectStoreGetError>()({
+  tag: "IDBObjectStoreGetError",
+  operation: "get"
+}) {}
+export class IDBObjectStoreGetAllError extends TaggedStoreError<IDBObjectStoreGetAllError>()({
+  tag: "IDBObjectStoreGetAllError",
+  operation: "getAll"
+}) {}
+export class IDBObjectStoreDeleteError extends TaggedStoreError<IDBObjectStoreDeleteError>()({
+  tag: "IDBObjectStoreDeleteError",
+  operation: "delete"
+}) {}
+export class IDBObjectStoreClearError extends TaggedStoreError<IDBObjectStoreClearError>()({
+  tag: "IDBObjectStoreClearError",
+  operation: "clear"
+}) {}
+export class IDBObjectStoreIndexError extends TaggedStoreError<IDBObjectStoreIndexError>()({
+  tag: "IDBObjectStoreIndexError",
+  operation: "index"
+}) {}
+
+export type IDBObjectStoreOperationErrorMap = {
+  add: IDBObjectStoreAddError
+  put: IDBObjectStorePutError
+  get: IDBObjectStoreGetError
+  getAll: IDBObjectStoreGetAllError
+  delete: IDBObjectStoreDeleteError
+  clear: IDBObjectStoreClearError
+  index: IDBObjectStoreIndexError
+}
+
+export const IDBObjectStoreOperationErrorMap = {
+  fromUnknown<Op extends StoreServiceOperations>(
+    error: unknown,
+    operation: Op,
+    isFromRequest: boolean = false
+  ) {
+    const Err = Match.type<StoreServiceOperations>().pipe(
+      Match.when("add", () => IDBObjectStoreAddError),
+      Match.when("put", () => IDBObjectStorePutError),
+      Match.when("get", () => IDBObjectStoreGetError),
+      Match.when("getAll", () => IDBObjectStoreGetAllError),
+      Match.when("delete", () => IDBObjectStoreDeleteError),
+      Match.when("clear", () => IDBObjectStoreClearError),
+      Match.when("index", () => IDBObjectStoreIndexError),
+      Match.exhaustive
+    )(operation)
+    return Err.fromUnknown(error, isFromRequest) as IDBObjectStoreOperationErrorMap[Op] | null
   }
 }

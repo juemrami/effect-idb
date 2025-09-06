@@ -3,7 +3,15 @@ export {
   IDBIndexGetAllError,
   IDBIndexGetAllKeysError,
   IDBIndexGetError,
-  IDBIndexGetKeyError
+  IDBIndexGetKeyError,
+  // object store
+  IDBObjectStoreAddError,
+  IDBObjectStoreClearError,
+  IDBObjectStoreDeleteError,
+  IDBObjectStoreGetAllError,
+  IDBObjectStoreGetError,
+  IDBObjectStoreIndexError,
+  IDBObjectStorePutError
 } from "./errors.js"
 export {
   type IDBDatabaseConfig,
