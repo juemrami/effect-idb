@@ -1,4 +1,5 @@
 import { Data, Match } from "effect"
+import type { IDBDatabaseConfig } from "./idbdatabase.js"
 import type { IndexServiceOperations, StoreServiceOperations } from "./idbobjectstore.js"
 
 export const isKnownDOMException = <T extends ReadonlyArray<string>>(
@@ -10,6 +11,89 @@ export const isKnownDOMException = <T extends ReadonlyArray<string>>(
 export interface DomException<T extends string> extends DOMException {
   /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/DOMException/name) */
   readonly name: T
+}
+
+/*******************************************************************************
+ * IDBDatabase Errors
+ * includes internal database errors sourcing from async request based operations
+ *******************************************************************************/
+
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBRequest/error
+const IDBRequestValidExceptionNames = [
+  "AbortError", // All requests still in progress receive this error when the transaction is aborted
+  "ConstraintError", // Data doesn't conform to store constraints (e.g., trying to add duplicate key)
+  "NotReadableError", // Unrecoverable read failure - record exists in database but value cannot be retrieved
+  "QuotaExceededError", // Application runs out of disk quota (browser may prompt user for more space)
+  "UnknownError", // Transient read failure errors, including general disk IO and unspecified errors
+  "VersionError" // Attempting to open database with version lower than the one it already has
+] as const
+
+const IDBDatabaseOpValidExceptionNames = {
+  // https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase/createObjectStore#exceptions
+  createObjectStore: [
+    "InvalidStateError", // Thrown if not called within an upgrade transaction
+    "ConstraintError", // Thrown if an object store with the given name already exists in the connected database
+    "InvalidAccessError", // Thrown if autoIncrement is set to true and keyPath is either an empty string or an array
+    "SyntaxError", // Thrown if the provided keyPath is not a valid key path, or if the options object is malformed
+    "TransactionInactiveError" // Thrown if a request is made on a source database that does not exist, or if the associated upgrade transaction has completed or is processing a request
+  ] as const,
+  // https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase/deleteObjectStore#exceptions
+  deleteObjectStore: [
+    "InvalidStateError", // Thrown if the method was not called from a versionchange transaction callback.
+    "TransactionInactiveError", // Thrown if a request is made on a source database that doesn't exist (E.g. has been deleted or removed.)
+    "NotFoundError" // Thrown when trying to delete an object store that does not exist.
+  ] as const
+}
+
+export class IDBDatabaseOpenError extends Data.TaggedError("IDBDatabaseOpenError")<{
+  readonly message: string
+  readonly config: IDBDatabaseConfig
+  /** TypeError if version not a number > zero */
+  readonly cause: DomException<typeof IDBRequestValidExceptionNames[number]> | TypeError
+}> {
+  static fromUnknown(error: unknown, config: IDBDatabaseConfig, isFromRequest: boolean = false) {
+    const syncText = isFromRequest ? "Async Request" : "Sync Method"
+    if (
+      isKnownDOMException(error, IDBRequestValidExceptionNames)
+      || error instanceof TypeError
+    ) {
+      return new IDBDatabaseOpenError({
+        message: `${syncText} error opening IndexedDB database. ${error}`,
+        config,
+        cause: error
+      })
+    }
+    return null
+  }
+}
+
+export class IDBDatabaseCreateObjectStoreError extends Data.TaggedError("IDBDatabaseCreateObjectStoreError")<{
+  readonly message: string
+  readonly cause: DomException<typeof IDBDatabaseOpValidExceptionNames["createObjectStore"][number]>
+}> {
+  static fromUnknown(error: unknown) {
+    if (isKnownDOMException(error, IDBDatabaseOpValidExceptionNames.createObjectStore)) {
+      return new IDBDatabaseCreateObjectStoreError({
+        message: `Sync error creating object store. ${error}`,
+        cause: error
+      })
+    }
+    return null
+  }
+}
+export class IDBDatabaseDeleteObjectStoreError extends Data.TaggedError("IDBDatabaseDeleteObjectStoreError")<{
+  readonly message: string
+  readonly cause?: DomException<typeof IDBDatabaseOpValidExceptionNames["deleteObjectStore"][number]>
+}> {
+  static fromUnknown(error: unknown) {
+    if (isKnownDOMException(error, IDBDatabaseOpValidExceptionNames.deleteObjectStore)) {
+      return new IDBDatabaseDeleteObjectStoreError({
+        message: `Sync error deleting object store. ${error}`,
+        cause: error
+      })
+    }
+    return null
+  }
 }
 
 /*******************************************************************************
@@ -50,6 +134,7 @@ export const IndexOpValidExceptionNames = {
 } satisfies Record<IndexServiceOperations, ReadonlyArray<string>>
 
 type OpExceptionNames<Op extends IndexServiceOperations> = typeof IndexOpValidExceptionNames[Op][number]
+
 export type IndexOperationExceptions<
   Op extends IndexServiceOperations
 > = Op extends "getAll" ? DomException<OpExceptionNames<Op>> | TypeError
@@ -73,10 +158,11 @@ function errPropsFromUnknown<const Op extends IndexServiceOperations>(
 ): ErrorProps<Op> | null {
   // todo: better handling for errors sourcing from requests, for now process same as sync method errors.
   if (
-    (isKnownDOMException(error, IndexOpValidExceptionNames[operation]))
+    (!isFromRequest && isKnownDOMException(error, IndexOpValidExceptionNames[operation]))
     || (operation === "getAll" || operation === "getAllKeys") && error instanceof TypeError
+    || (isFromRequest && isKnownDOMException(error, IDBRequestValidExceptionNames))
   ) {
-    const syncText = isFromRequest ? "Async Request " : "Sync Method"
+    const syncText = isFromRequest ? "Async Request" : "Sync Method"
     const message = Match.type<IndexServiceOperations>().pipe(
       Match.when("get", () => `${syncText} error getting value from index. ${error}`),
       Match.when("getAll", () => `${syncText} error getting all values from index. ${error}`),
@@ -218,33 +304,45 @@ export const StoreOpValidExceptionNames = {
   index: [
     "InvalidStateError", // Thrown if the object store has been deleted or transaction is inactive.
     "NotFoundError" // Thrown if the index does not exist (case-sensitive).
+  ] as const,
+  // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/createIndex#exceptions
+  createIndex: [
+    "ConstraintError", // Thrown if an index with the same name already exists in the database (case-sensitive)
+    "InvalidAccessError", // Thrown if the provided key path is a sequence, and multiEntry is set to true in the options
+    "InvalidStateError", // Thrown if method was not called from a versionchange transaction mode callback, or if the object store has been deleted
+    "SyntaxError", // Thrown if the provided keyPath is not a valid key path
+    "TransactionInactiveError" // Thrown if the transaction this IDBObjectStore belongs to is not active (e.g., has been deleted or removed)
   ] as const
-} satisfies Record<StoreServiceOperations, ReadonlyArray<string>>
+} satisfies Record<StoreServiceOperations | "createIndex", ReadonlyArray<string>>
 
-type StoreOpExceptionNames<Op extends StoreServiceOperations> = typeof StoreOpValidExceptionNames[Op][number]
+type ValidStoreOperation = keyof typeof StoreOpValidExceptionNames
+
+type StoreOpExceptionNames<Op extends ValidStoreOperation> = typeof StoreOpValidExceptionNames[Op][number]
+
 export type StoreOperationExceptions<
-  Op extends StoreServiceOperations
+  Op extends ValidStoreOperation
 > = Op extends "getAll" ? DomException<StoreOpExceptionNames<Op>> | TypeError
   : DomException<StoreOpExceptionNames<Op>>
 
-type StoreErrorProps<Op extends StoreServiceOperations> = {
+type StoreErrorProps<Op extends ValidStoreOperation> = {
   readonly operation: Op
   readonly message: string
   readonly cause: StoreOperationExceptions<Op>
 }
 
-function storeErrPropsFromUnknown<const Op extends StoreServiceOperations>(
+function storeErrPropsFromUnknown<const Op extends ValidStoreOperation>(
   error: unknown,
   operation: Op,
   isFromRequest: boolean = false
 ): StoreErrorProps<Op> | null {
   // todo: better handling for errors sourcing from requests, for now process same as sync method errors.
   if (
-    (isKnownDOMException(error, StoreOpValidExceptionNames[operation]))
+    (!isFromRequest && isKnownDOMException(error, StoreOpValidExceptionNames[operation]))
     || (operation === "getAll" && error instanceof TypeError)
+    || (isFromRequest && isKnownDOMException(error, IDBRequestValidExceptionNames))
   ) {
     const syncText = isFromRequest ? "Async Request" : "Sync Method"
-    const message = Match.type<StoreServiceOperations>().pipe(
+    const message = Match.type<ValidStoreOperation>().pipe(
       Match.when("add", () => `${syncText} error adding value to object store. ${error}`),
       Match.when("put", () => `${syncText} error putting value in object store. ${error}`),
       Match.when("get", () => `${syncText} error getting value from object store. ${error}`),
@@ -252,6 +350,7 @@ function storeErrPropsFromUnknown<const Op extends StoreServiceOperations>(
       Match.when("delete", () => `${syncText} error deleting value from object store. ${error}`),
       Match.when("clear", () => `${syncText} error clearing object store. ${error}`),
       Match.when("index", () => `${syncText} error accessing index on object store. ${error}`),
+      Match.when("createIndex", () => `${syncText} error creating index on object store. ${error}`),
       Match.exhaustive
     )(operation)
     return {
@@ -265,7 +364,7 @@ function storeErrPropsFromUnknown<const Op extends StoreServiceOperations>(
 
 const TaggedStoreError =
   <Self>() =>
-  <const Op extends StoreServiceOperations, const Tag extends string>({ operation, tag }: {
+  <const Op extends ValidStoreOperation, const Tag extends string>({ operation, tag }: {
     tag: Tag
     operation: Op
   }) => {
@@ -314,6 +413,12 @@ export class IDBObjectStoreClearError extends TaggedStoreError<IDBObjectStoreCle
 export class IDBObjectStoreIndexError extends TaggedStoreError<IDBObjectStoreIndexError>()({
   tag: "IDBObjectStoreIndexError",
   operation: "index"
+}) {}
+
+// upgradeService operations
+export class IDBObjectStoreCreateIndexError extends TaggedStoreError<IDBObjectStoreCreateIndexError>()({
+  tag: "IDBObjectStoreCreateIndexError",
+  operation: "createIndex"
 }) {}
 
 export type IDBObjectStoreOperationErrorMap = {

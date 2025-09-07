@@ -1,5 +1,4 @@
 import * as Context from "effect/Context"
-import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
@@ -7,6 +6,12 @@ import type { RuntimeFiber } from "effect/Fiber"
 import { pipe } from "effect/Function"
 import * as Layer from "effect/Layer"
 import * as Ref from "effect/Ref"
+import {
+  IDBDatabaseCreateObjectStoreError,
+  IDBDatabaseDeleteObjectStoreError,
+  IDBDatabaseOpenError,
+  IDBObjectStoreCreateIndexError
+} from "./errors.js"
 import {
   type IDBObjectStoreConfig,
   type IDBObjectStoreIndexParams,
@@ -23,65 +28,6 @@ export class IDBFactoryImplementation
   static readonly Browser = Layer.sync(IDBFactoryImplementation, () => window.indexedDB)
   static readonly makeExternal = (indexedDB: IDBFactory) => Layer.sync(IDBFactoryImplementation, () => indexedDB)
 }
-
-// https://developer.mozilla.org/en-US/docs/Web/API/IDBRequest/error
-const IDBRequestExceptionType = [
-  "AbortError", // All requests still in progress receive this error when the transaction is aborted
-  "ConstraintError", // Data doesn't conform to store constraints (e.g., trying to add duplicate key)
-  "NotReadableError", // Unrecoverable read failure - record exists in database but value cannot be retrieved
-  "QuotaExceededError", // Application runs out of disk quota (browser may prompt user for more space)
-  "UnknownError", // Transient read failure errors, including general disk IO and unspecified errors
-  "VersionError" // Attempting to open database with version lower than the one it already has
-] as const
-type IDBRequestExceptionType = typeof IDBRequestExceptionType[number]
-
-// https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase/createObjectStore#exceptions
-const CreateObjectStoreExceptionType = [
-  "InvalidStateError", // Thrown if not called within an upgrade transaction
-  "ConstraintError", // Thrown if an object store with the given name already exists in the connected database
-  "InvalidAccessError", // Thrown if autoIncrement is set to true and keyPath is either an empty string or an array
-  "SyntaxError", // Thrown if the provided keyPath is not a valid key path, or if the options object is malformed
-  "TransactionInactiveError" // Thrown if a request is made on a source database that does not exist, or if the associated upgrade transaction has completed or is processing a request
-] as const
-type CreateObjectStoreExceptionType = typeof CreateObjectStoreExceptionType[number]
-
-// https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/createIndex#exceptions
-const CreateObjectStoreIndexExceptionType = [
-  "ConstraintError", // Thrown if an index with the same name already exists in the database (case-sensitive)
-  "InvalidAccessError", // Thrown if the provided key path is a sequence, and multiEntry is set to true in the options
-  "InvalidStateError", // Thrown if method was not called from a versionchange transaction mode callback, or if the object store has been deleted
-  "SyntaxError", // Thrown if the provided keyPath is not a valid key path
-  "TransactionInactiveError" // Thrown if the transaction this IDBObjectStore belongs to is not active (e.g., has been deleted or removed)
-] as const
-type CreateObjectStoreIndexExceptionType = typeof CreateObjectStoreIndexExceptionType[number]
-
-type ExpectedExceptionType =
-  | IDBRequestExceptionType
-  | CreateObjectStoreExceptionType
-  | CreateObjectStoreIndexExceptionType
-interface TypedDOMException<T extends ExpectedExceptionType = ExpectedExceptionType> extends DOMException {
-  readonly name: T
-}
-const isKnownDOMException = <T extends ReadonlyArray<ExpectedExceptionType>>(
-  error: unknown,
-  knownNames: T
-): error is TypedDOMException<T[number]> => {
-  return error instanceof DOMException && (knownNames as ReadonlyArray<string>).includes(error.name)
-}
-export class IDBDatabaseOpenError extends Data.TaggedError("IDBDatabaseOpenError")<{
-  readonly message: string
-  readonly config?: IDBDatabaseConfig
-  readonly cause?: TypedDOMException | TypeError
-}> {}
-export class IDBDatabaseObjectStoreCreationError extends Data.TaggedError("IDBDatabaseObjectStoreCreationError")<{
-  readonly message: string
-  readonly storeName: string
-  readonly cause: TypedDOMException<CreateObjectStoreExceptionType | CreateObjectStoreIndexExceptionType>
-}> {}
-export class IDBDatabaseObjectStoreDeletionError extends Data.TaggedError("IDBDatabaseObjectStoreDeletionError")<{
-  readonly message: string
-  readonly cause?: unknown
-}> {}
 
 const createBaseService = Effect.fn(function*(db: IDBDatabase) {
   // handle to raw db connection
@@ -111,15 +57,12 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
         return store.createIndex(index.name, index.keyPath, index.options)
       },
       catch: (error) => {
-        if (isKnownDOMException(error, CreateObjectStoreIndexExceptionType)) {
-          return new IDBDatabaseObjectStoreCreationError({
-            message: `Sync error creating index "${index.name}" on object store. \n. ${error}`,
-            storeName: store.name,
-            cause: error
-          })
-        } else throw new Error(`Unexpected error creating index "${index.name}"`, { cause: error })
+        const matched = IDBObjectStoreCreateIndexError.fromUnknown(error)
+        if (matched) return matched
+        else throw error
       }
     })
+  // todo: improve typing to exclude CreateIndexError when indexes is empty/undefined
   const createObjectStore = (
     name: string,
     options?: IDBObjectStoreParameters,
@@ -130,13 +73,9 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
       Effect.try({
         try: () => db.createObjectStore(name, options),
         catch: (error) => {
-          if (isKnownDOMException(error, CreateObjectStoreExceptionType)) {
-            return new IDBDatabaseObjectStoreCreationError({
-              message: `Sync error creating objectStore "${name}".\n${error.message}`,
-              storeName: name,
-              cause: error
-            })
-          } else throw new Error(`Unexpected error creating object store ${name}`, { cause: error })
+          const matched = IDBDatabaseCreateObjectStoreError.fromUnknown(error)
+          if (matched) return matched
+          else throw error
         }
       }),
       // create any specified indexes on the store
@@ -145,11 +84,11 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
   const deleteObjectStore = (name: string) => {
     return pipe(Effect.try({
       try: () => db.deleteObjectStore(name),
-      catch: (error) =>
-        new IDBDatabaseObjectStoreDeletionError({
-          message: `Sync error deleting object store ${name}`,
-          cause: error
-        })
+      catch: (error) => {
+        const matched = IDBDatabaseDeleteObjectStoreError.fromUnknown(error)
+        if (matched) return matched
+        else throw error
+      }
     }))
   }
   type KeyPath = string | Array<string>
@@ -303,17 +242,12 @@ export class IDBFactoryService extends Context.Tag(`${CONTEXT_PREFIX}FactoryServ
         open: (config: IDBDatabaseConfig) =>
           Effect.gen(function*() {
             const request = yield* Effect.try({
-              try: () => indexedDB.open(config.name, config.version),
               // https://developer.mozilla.org/en-US/docs/Web/API/IDBFactory/open#exceptions
+              try: () => indexedDB.open(config.name, config.version),
               catch: (error) => {
-                if (error instanceof TypeError) {
-                  return new IDBDatabaseOpenError({
-                    message: `Sync Error opening connection.\n${error.message}`,
-                    config,
-                    cause: error
-                  })
-                }
-                throw new Error(`Unexpected Error Opening db connection. ${error}`, { cause: error }) // defect with original error
+                const matched = IDBDatabaseOpenError.fromUnknown(error, config)
+                if (matched) return matched
+                else throw error // defect with original error
               }
             })
             const dbConnection = yield* Effect.async<IDBDatabase, IDBDatabaseOpenError>((resume, _signal) => {
@@ -381,18 +315,11 @@ export class IDBFactoryService extends Context.Tag(`${CONTEXT_PREFIX}FactoryServ
                 )
               }
               request.onerror = () => {
-                if (isKnownDOMException(request.error, IDBRequestExceptionType)) {
-                  resume(
-                    Effect.fail(
-                      new IDBDatabaseOpenError({
-                        message: `Async error opening connection.\n${request.error.message}`,
-                        config,
-                        cause: request.error as TypedDOMException<IDBRequestExceptionType>
-                      })
-                    )
-                  )
+                const matched = IDBDatabaseOpenError.fromUnknown(request.error, config, true)
+                if (matched) {
+                  resume(Effect.fail(matched))
                 } else {
-                  resume(Effect.die(`Unexpected error opening IndexedDB database. ${request.error}`))
+                  resume(Effect.die(request.error))
                 }
               }
               request.onsuccess = () => {

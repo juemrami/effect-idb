@@ -1,4 +1,9 @@
 export {
+  // database
+  IDBDatabaseCreateObjectStoreError,
+  IDBDatabaseDeleteObjectStoreError,
+  IDBDatabaseOpenError,
+  // index
   IDBIndexCountError,
   IDBIndexGetAllError,
   IDBIndexGetAllKeysError,
@@ -7,6 +12,7 @@ export {
   // object store
   IDBObjectStoreAddError,
   IDBObjectStoreClearError,
+  IDBObjectStoreCreateIndexError,
   IDBObjectStoreDeleteError,
   IDBObjectStoreGetAllError,
   IDBObjectStoreGetError,
@@ -15,9 +21,6 @@ export {
 } from "./errors.js"
 export {
   type IDBDatabaseConfig,
-  IDBDatabaseObjectStoreCreationError,
-  IDBDatabaseObjectStoreDeletionError,
-  IDBDatabaseOpenError,
   IDBDatabaseService,
   IDBFactoryImplementation,
   IDBFactoryService
