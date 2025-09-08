@@ -10,7 +10,7 @@ import {
   IDBDatabaseCreateObjectStoreError,
   IDBDatabaseDeleteObjectStoreError,
   IDBDatabaseOpenError,
-  IDBObjectStoreCreateIndexError
+  IDBObjectStoreOperationErrorMap
 } from "./errors.js"
 import {
   type IDBObjectStoreConfig,
@@ -57,7 +57,7 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
         return store.createIndex(index.name, index.keyPath, index.options)
       },
       catch: (error) => {
-        const matched = IDBObjectStoreCreateIndexError.fromUnknown(error)
+        const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "createIndex")
         if (matched) return matched
         else throw error
       }

@@ -25,7 +25,7 @@ const useRawIndexRequest = <T, const Op extends IndexServiceOperations>(
         else return matched
       }
     })
-    return yield* Effect.async<T, IDBIndexOperationErrorMap[Op]>((resume) => {
+    return yield* Effect.async<T, IDBIndexOperationErrorMap<true>[Op]>((resume) => {
       request.onsuccess = (event) => {
         resume(Effect.succeed((event.target as IDBRequest<T>).result))
       }
@@ -95,7 +95,7 @@ export type StoreServiceOperations = "add" | "put" | "get" | "getAll" | "delete"
 const useRawStoreRequest = <T, const Op extends StoreServiceOperations>(
   objectRequest: () => IDBRequest<T>,
   operation: Op
-): Effect.Effect<T, IDBObjectStoreOperationErrorMap[Op], never> => {
+) => {
   return Effect.gen(function*() {
     const request = yield* Effect.try({
       try: objectRequest,
@@ -105,7 +105,7 @@ const useRawStoreRequest = <T, const Op extends StoreServiceOperations>(
         return matched
       }
     })
-    return yield* Effect.async<T, IDBObjectStoreOperationErrorMap[Op]>((resume) => {
+    return yield* Effect.async<T, IDBObjectStoreOperationErrorMap<true>[Op]>((resume) => {
       request.onsuccess = (event) => {
         resume(Effect.succeed((event.target as IDBRequest<T>).result))
       }

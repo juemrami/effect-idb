@@ -19,7 +19,7 @@ export interface DomException<T extends string> extends DOMException {
  *******************************************************************************/
 
 // https://developer.mozilla.org/en-US/docs/Web/API/IDBRequest/error
-const IDBRequestValidExceptionNames = [
+export const IDBRequestValidExceptionNames = [
   "AbortError", // All requests still in progress receive this error when the transaction is aborted
   "ConstraintError", // Data doesn't conform to store constraints (e.g., trying to add duplicate key)
   "NotReadableError", // Unrecoverable read failure - record exists in database but value cannot be retrieved
@@ -28,6 +28,7 @@ const IDBRequestValidExceptionNames = [
   "VersionError" // Attempting to open database with version lower than the one it already has
 ] as const
 
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase#instance_methods
 const IDBDatabaseOpValidExceptionNames = {
   // https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase/createObjectStore#exceptions
   createObjectStore: [
@@ -141,22 +142,26 @@ export type IndexOperationExceptions<
   : Op extends "getAllKeys" ? DomException<OpExceptionNames<Op>> | TypeError
   : DomException<OpExceptionNames<Op>>
 
-type ErrorProps<Op extends IndexServiceOperations> = {
+type IndexErrorProps<Op extends IndexServiceOperations, IsFromRequest extends boolean> = {
   readonly operation: Op
   readonly message: string
-  readonly cause: IndexOperationExceptions<Op>
+  readonly isFromRequest: IsFromRequest
+  readonly cause: IsFromRequest extends true ? DomException<typeof IDBRequestValidExceptionNames[number]>
+    : IndexOperationExceptions<Op>
 }
 
 /**
  * Attempts to map an unknown error to props for a known IndexedDB Index operation error.
  * @returns `null` if the error is not recognized, otherwise error constructor data.
  */
-function errPropsFromUnknown<const Op extends IndexServiceOperations>(
+function indexErrPropsFromUnknown<
+  const Op extends IndexServiceOperations,
+  const Request extends boolean
+>(
   error: unknown,
   operation: Op,
-  isFromRequest: boolean = false
-): ErrorProps<Op> | null {
-  // todo: better handling for errors sourcing from requests, for now process same as sync method errors.
+  isFromRequest: Request
+) {
   if (
     (!isFromRequest && isKnownDOMException(error, IndexOpValidExceptionNames[operation]))
     || (operation === "getAll" || operation === "getAllKeys") && error instanceof TypeError
@@ -174,71 +179,45 @@ function errPropsFromUnknown<const Op extends IndexServiceOperations>(
     return {
       operation,
       message,
-      cause: error as IndexOperationExceptions<Op>
-    }
+      isFromRequest,
+      cause: error
+    } as IndexErrorProps<Op, Request>
   }
   return null
 }
 
-const TaggedIndexError =
-  <Self>() =>
-  <const Op extends IndexServiceOperations, const Tag extends string>({ operation, tag }: {
-    tag: Tag
-    operation: Op
-  }) => {
-    const ErrClass = Data.TaggedError(tag)
-    Object.defineProperty(ErrClass, "fromUnknown", {
-      get(this) {
-        return (error: unknown, isFromRequest: boolean = false) => {
-          const props = errPropsFromUnknown(error, operation, isFromRequest)
-          if (props) return new ErrClass<ErrorProps<Op>>(props) as Self
-          return null
-        }
-      }
-    })
-    return ErrClass as unknown as typeof ErrClass<ErrorProps<Op>> & {
-      readonly fromUnknown: (
-        error: unknown,
-        isFromRequest?: boolean
-      ) => Self | null
-    }
-  }
+export class IDBIndexGetError<FromRequest extends boolean>
+  extends Data.TaggedError("IDBIndexGetError")<IndexErrorProps<"get", FromRequest>>
+{}
+export class IDBIndexGetAllError<FromRequest extends boolean>
+  extends Data.TaggedError("IDBIndexGetAllError")<IndexErrorProps<"getAll", FromRequest>>
+{}
+export class IDBIndexGetKeyError<FromRequest extends boolean>
+  extends Data.TaggedError("IDBIndexGetKeyError")<IndexErrorProps<"getKey", FromRequest>>
+{}
+export class IDBIndexGetAllKeysError<FromRequest extends boolean>
+  extends Data.TaggedError("IDBIndexGetAllKeysError")<IndexErrorProps<"getAllKeys", FromRequest>>
+{}
+export class IDBIndexCountError<FromRequest extends boolean>
+  extends Data.TaggedError("IDBIndexCountError")<IndexErrorProps<"count", FromRequest>>
+{}
 
-export class IDBIndexGetError extends TaggedIndexError<IDBIndexGetError>()({
-  tag: "IDBIndexGetError",
-  operation: "get"
-}) {}
-export class IDBIndexGetAllError extends TaggedIndexError<IDBIndexGetAllError>()({
-  tag: "IDBIndexGetAllError",
-  operation: "getAll"
-}) {}
-export class IDBIndexGetKeyError extends TaggedIndexError<IDBIndexGetKeyError>()({
-  tag: "IDBIndexGetKeyError",
-  operation: "getKey"
-}) {}
-export class IDBIndexGetAllKeysError extends TaggedIndexError<IDBIndexGetAllKeysError>()({
-  tag: "IDBIndexGetAllKeysError",
-  operation: "getAllKeys"
-}) {}
-export class IDBIndexCountError extends TaggedIndexError<IDBIndexCountError>()({
-  tag: "IDBIndexCountError",
-  operation: "count"
-}) {}
-
-export type IDBIndexOperationErrorMap = {
-  get: IDBIndexGetError
-  getAll: IDBIndexGetAllError
-  getKey: IDBIndexGetKeyError
-  getAllKeys: IDBIndexGetAllKeysError
-  count: IDBIndexCountError
+export type IDBIndexOperationErrorMap<Request extends boolean> = {
+  get: IDBIndexGetError<Request>
+  getAll: IDBIndexGetAllError<Request>
+  getKey: IDBIndexGetKeyError<Request>
+  getAllKeys: IDBIndexGetAllKeysError<Request>
+  count: IDBIndexCountError<Request>
 }
 
 export const IDBIndexOperationErrorMap = {
-  fromUnknown<Op extends IndexServiceOperations>(
+  fromUnknown<Op extends IndexServiceOperations, const Request extends boolean = false>(
     error: unknown,
     operation: Op,
-    isFromRequest: boolean = false
+    isFromRequest: Request = false as Request
   ) {
+    const props = indexErrPropsFromUnknown(error, operation, isFromRequest)
+    if (!props) return null
     const Err = Match.type<IndexServiceOperations>().pipe(
       Match.when("get", () => IDBIndexGetError),
       Match.when("getAll", () => IDBIndexGetAllError),
@@ -247,7 +226,8 @@ export const IDBIndexOperationErrorMap = {
       Match.when("count", () => IDBIndexCountError),
       Match.exhaustive
     )(operation)
-    return Err.fromUnknown(error, isFromRequest) as IDBIndexOperationErrorMap[Op] | null
+    // @ts-ignore `operation` should never have a conflicting type here
+    return new Err(props) as IDBIndexOperationErrorMap<Request>[Op] | null
   }
 }
 
@@ -324,17 +304,20 @@ export type StoreOperationExceptions<
 > = Op extends "getAll" ? DomException<StoreOpExceptionNames<Op>> | TypeError
   : DomException<StoreOpExceptionNames<Op>>
 
-type StoreErrorProps<Op extends ValidStoreOperation> = {
+type StoreErrorProps<Op extends ValidStoreOperation, IsFromRequest extends boolean = false> = {
   readonly operation: Op
   readonly message: string
-  readonly cause: StoreOperationExceptions<Op>
+  readonly isFromRequest: IsFromRequest
+  readonly cause: IsFromRequest extends true ? DomException<typeof IDBRequestValidExceptionNames[number]>
+    : StoreOperationExceptions<Op>
 }
 
-function storeErrPropsFromUnknown<const Op extends ValidStoreOperation>(
+function storeErrPropsFromUnknown<const Op extends ValidStoreOperation, const Request extends boolean>(
   error: unknown,
   operation: Op,
-  isFromRequest: boolean = false
-): StoreErrorProps<Op> | null {
+  isRequest: Request
+) {
+  const isFromRequest = isRequest === undefined ? false : isRequest
   // todo: better handling for errors sourcing from requests, for now process same as sync method errors.
   if (
     (!isFromRequest && isKnownDOMException(error, StoreOpValidExceptionNames[operation]))
@@ -356,97 +339,67 @@ function storeErrPropsFromUnknown<const Op extends ValidStoreOperation>(
     return {
       operation,
       message,
-      cause: error as StoreOperationExceptions<Op>
-    }
+      isFromRequest,
+      cause: error
+    } as StoreErrorProps<Op, Request>
   }
   return null
 }
-
-const TaggedStoreError =
-  <Self>() =>
-  <const Op extends ValidStoreOperation, const Tag extends string>({ operation, tag }: {
-    tag: Tag
-    operation: Op
-  }) => {
-    const ErrClass = Data.TaggedError(tag)
-    Object.defineProperty(ErrClass, "fromUnknown", {
-      get(this) {
-        return (error: unknown, isFromRequest: boolean = false) => {
-          const props = storeErrPropsFromUnknown(error, operation, isFromRequest)
-          if (props) return new ErrClass<StoreErrorProps<Op>>(props) as Self
-          return null
-        }
-      }
-    })
-    return ErrClass as unknown as typeof ErrClass<StoreErrorProps<Op>> & {
-      readonly fromUnknown: (
-        error: unknown,
-        isFromRequest?: boolean
-      ) => Self | null
-    }
-  }
-
-export class IDBObjectStoreAddError extends TaggedStoreError<IDBObjectStoreAddError>()({
-  tag: "IDBObjectStoreAddError",
-  operation: "add"
-}) {}
-export class IDBObjectStorePutError extends TaggedStoreError<IDBObjectStorePutError>()({
-  tag: "IDBObjectStorePutError",
-  operation: "put"
-}) {}
-export class IDBObjectStoreGetError extends TaggedStoreError<IDBObjectStoreGetError>()({
-  tag: "IDBObjectStoreGetError",
-  operation: "get"
-}) {}
-export class IDBObjectStoreGetAllError extends TaggedStoreError<IDBObjectStoreGetAllError>()({
-  tag: "IDBObjectStoreGetAllError",
-  operation: "getAll"
-}) {}
-export class IDBObjectStoreDeleteError extends TaggedStoreError<IDBObjectStoreDeleteError>()({
-  tag: "IDBObjectStoreDeleteError",
-  operation: "delete"
-}) {}
-export class IDBObjectStoreClearError extends TaggedStoreError<IDBObjectStoreClearError>()({
-  tag: "IDBObjectStoreClearError",
-  operation: "clear"
-}) {}
-export class IDBObjectStoreIndexError extends TaggedStoreError<IDBObjectStoreIndexError>()({
-  tag: "IDBObjectStoreIndexError",
-  operation: "index"
-}) {}
-
+export class IDBObjectStoreAddError<FromRequest extends boolean>
+  extends Data.TaggedClass("IDBObjectStoreAddError")<StoreErrorProps<"add", FromRequest>>
+{}
+export class IDBObjectStorePutError<FromRequest extends boolean>
+  extends Data.TaggedClass("IDBObjectStorePutError")<StoreErrorProps<"put", FromRequest>>
+{}
+export class IDBObjectStoreGetError<FromRequest extends boolean>
+  extends Data.TaggedClass("IDBObjectStoreGetError")<StoreErrorProps<"get", FromRequest>>
+{}
+export class IDBObjectStoreGetAllError<FromRequest extends boolean>
+  extends Data.TaggedClass("IDBObjectStoreGetAllError")<StoreErrorProps<"getAll", FromRequest>>
+{}
+export class IDBObjectStoreDeleteError<FromRequest extends boolean>
+  extends Data.TaggedClass("IDBObjectStoreDeleteError")<StoreErrorProps<"delete", FromRequest>>
+{}
+export class IDBObjectStoreClearError<FromRequest extends boolean>
+  extends Data.TaggedClass("IDBObjectStoreClearError")<StoreErrorProps<"clear", FromRequest>>
+{}
+export class IDBObjectStoreIndexError extends Data.TaggedClass("IDBObjectStoreIndexError")<StoreErrorProps<"index">> {}
 // upgradeService operations
-export class IDBObjectStoreCreateIndexError extends TaggedStoreError<IDBObjectStoreCreateIndexError>()({
-  tag: "IDBObjectStoreCreateIndexError",
-  operation: "createIndex"
-}) {}
+export class IDBObjectStoreCreateIndexError
+  extends Data.TaggedClass("IDBObjectStoreCreateIndexError")<StoreErrorProps<"createIndex">>
+{}
 
-export type IDBObjectStoreOperationErrorMap = {
-  add: IDBObjectStoreAddError
-  put: IDBObjectStorePutError
-  get: IDBObjectStoreGetError
-  getAll: IDBObjectStoreGetAllError
-  delete: IDBObjectStoreDeleteError
-  clear: IDBObjectStoreClearError
+export type IDBObjectStoreOperationErrorMap<Request extends boolean> = {
+  add: IDBObjectStoreAddError<Request>
+  put: IDBObjectStorePutError<Request>
+  get: IDBObjectStoreGetError<Request>
+  getAll: IDBObjectStoreGetAllError<Request>
+  delete: IDBObjectStoreDeleteError<Request>
+  clear: IDBObjectStoreClearError<Request>
   index: IDBObjectStoreIndexError
+  createIndex: IDBObjectStoreCreateIndexError
 }
 
 export const IDBObjectStoreOperationErrorMap = {
-  fromUnknown<Op extends StoreServiceOperations>(
+  fromUnknown<Op extends ValidStoreOperation, Request extends boolean = false>(
     error: unknown,
     operation: Op,
-    isFromRequest: boolean = false
+    isFromRequest: Request = false as Request
   ) {
-    const Err = Match.type<StoreServiceOperations>().pipe(
-      Match.when("add", () => IDBObjectStoreAddError),
-      Match.when("put", () => IDBObjectStorePutError),
-      Match.when("get", () => IDBObjectStoreGetError),
-      Match.when("getAll", () => IDBObjectStoreGetAllError),
-      Match.when("delete", () => IDBObjectStoreDeleteError),
-      Match.when("clear", () => IDBObjectStoreClearError),
+    const props = storeErrPropsFromUnknown(error, operation, isFromRequest)
+    if (!props) return null
+    const Err = Match.type<ValidStoreOperation>().pipe(
+      Match.when("add", () => IDBObjectStoreAddError<Request>),
+      Match.when("put", () => IDBObjectStorePutError<Request>),
+      Match.when("get", () => IDBObjectStoreGetError<Request>),
+      Match.when("getAll", () => IDBObjectStoreGetAllError<Request>),
+      Match.when("delete", () => IDBObjectStoreDeleteError<Request>),
+      Match.when("clear", () => IDBObjectStoreClearError<Request>),
       Match.when("index", () => IDBObjectStoreIndexError),
+      Match.when("createIndex", () => IDBObjectStoreCreateIndexError),
       Match.exhaustive
     )(operation)
-    return Err.fromUnknown(error, isFromRequest) as IDBObjectStoreOperationErrorMap[Op] | null
+    // @ts-ignore `operation` should never have a conflicting type here
+    return new Err(props) as IDBObjectStoreOperationErrorMap<Request>[Op] | null
   }
 }

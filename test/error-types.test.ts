@@ -1,7 +1,7 @@
 import { Console, Effect, Layer, pipe } from "effect"
 import { indexedDB } from "fake-indexeddb"
 import { expect, it } from "vitest"
-import { IndexOpValidExceptionNames } from "../src/errors.js"
+import { IDBRequestValidExceptionNames, IndexOpValidExceptionNames, StoreOpValidExceptionNames } from "../src/errors.js"
 import { IDBDatabaseService } from "../src/idbdatabase.js"
 import { TaggedIDBObjectStoreService } from "../src/idbobjectstore.js"
 
@@ -44,7 +44,18 @@ class ContactObjectStore extends TaggedIDBObjectStoreService<ContactObjectStore,
               ])
             }),
             Effect.tap(Console.log),
-            Effect.catchTag("IDBIndexCountError", (_) => {
+            Effect.catchTag("IDBIndexCountError", (err) => {
+              // @ts-expect-error typeof `cause.name` should be ambiguous atp
+              IDBRequestValidExceptionNames.includes(err.cause.name)
+              if (err.isFromRequest === true) {
+                const _ = err
+                // no error because cause.name has been narrow
+                IDBRequestValidExceptionNames.includes(err.cause.name)
+              } else {
+                const _ = err
+                // same as above
+                IndexOpValidExceptionNames.count.includes(err.cause.name)
+              }
               return Effect.succeed(null)
             }),
             Effect.catchTag("IDBIndexGetAllKeysError", (_) => {
@@ -52,9 +63,12 @@ class ContactObjectStore extends TaggedIDBObjectStoreService<ContactObjectStore,
             }),
             Effect.catchAll((_err) => {
               // x should be typed as const name for the exception types ie `IndexGetExceptionType`
-              const x = _err.cause.name
+              let x = _err.cause.name
+              if (!_err.isFromRequest) {
+                x = _err.cause.name
+                expect(IndexOpValidExceptionNames.get.includes(x)).toBeTruthy()
+              }
               // there should be no type error here
-              expect(IndexOpValidExceptionNames.get.includes(x)).toBeTruthy()
               return Effect.fail(_err)
             })
           ),
@@ -71,10 +85,28 @@ class ContactObjectStore extends TaggedIDBObjectStoreService<ContactObjectStore,
             Effect.andThen((emailIndex) => emailIndex.getAll(x)),
             Effect.catchAll((_err) => {
               if (_err.cause instanceof TypeError) return Effect.fail(_err)
-              const x = _err.cause.name
               // there should be no type error here
-              expect(IndexOpValidExceptionNames.getAll.includes(x)).toBeTruthy()
+              if (!_err.isFromRequest) {
+                const _x = _err.cause.name
+                expect(IndexOpValidExceptionNames.getAll.includes(_x)).toBeTruthy()
+              }
               return Effect.fail(_err)
+            })
+          ),
+        testObjectStoreErrorTypes: (x: any) =>
+          pipe(
+            baseService.index("by_email"),
+            Effect.andThen((_) => baseService.clear()),
+            Effect.andThen(() => baseService.get(1)),
+            Effect.andThen(() => baseService.add(x)),
+            Effect.andThen(() => baseService.delete(1)),
+            Effect.catchTag("IDBObjectStoreDeleteError", (_err) => {
+              if (!_err.isFromRequest) {
+                const _x = _err.cause.name
+                expect(StoreOpValidExceptionNames.delete.includes(_x)).toBeTruthy()
+              }
+
+              return Effect.die(new Error("Error Channel not empty"))
             })
           )
       })
