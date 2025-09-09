@@ -383,9 +383,10 @@ describe("IDBObjectStore Integration", () => {
     // Check that it's specifically a TransactionError with the right message
     switch (transactionError._tag) {
       // Expected error type
-      case "IDBTransactionError":
+      case "IDBDatabaseTransactionOpenError":
         // todo: add a better "reason" string or similar to the error
-        expect(transactionError.message).toMatch(/object.*store|not.*found/i)
+        expect(transactionError.cause).toBeInstanceOf(DOMException)
+        expect(transactionError.cause.name).toBe("NotFoundError")
         break
       default:
         expect.fail(`Unexpected error type: ${transactionError._tag}`)

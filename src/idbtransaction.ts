@@ -1,8 +1,8 @@
 import * as Context from "effect/Context"
-import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Ref from "effect/Ref"
+import { IDBDatabaseTransactionOpenError, IDBTransactionGetObjectStoreError } from "./errors.js"
 import { IDBDatabaseService } from "./idbdatabase.js"
 import type { IDBObjectStoreConfig } from "./idbobjectstore.js"
 import { makeObjectStoreProxyService } from "./idbobjectstore.js"
@@ -15,53 +15,15 @@ export type IDBTransactionParams = {
   options?: IDBTransactionOptions
 }
 
-// https://developer.mozilla.org/en-US/docs/Web/API/IDBTransaction/objectStore#exceptions
-const TransactionObjectStoreExceptionType = [
-  "NotFoundError", // Thrown if the requested object store is not in this transaction's scope.
-  "InvalidStateError" // Thrown if the request was made on an object that has been deleted or removed, or if the transaction has finished.
-] as const
-type TransactionObjectStoreExceptionType = typeof TransactionObjectStoreExceptionType[number]
-// https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase/transaction#exceptions
-const TransactionOpenExceptionType = [
-  "InvalidStateError", // Thrown if the close() method has previously been called on this IDBDatabase instance.
-  "NotFoundError", // Thrown if an object store specified in the 'storeNames' parameter has been deleted or removed.
-  "InvalidAccessError" // Thrown if the function was called with an empty list of store names.
-] as const
-type TransactionOpenExceptionType = typeof TransactionOpenExceptionType[number]
-type TransactionExceptionType = TransactionObjectStoreExceptionType | TransactionOpenExceptionType
-interface TypedDOMException<T extends TransactionExceptionType = TransactionExceptionType> extends DOMException {
-  readonly name: T
-}
-const isKnownDOMException = <T extends ReadonlyArray<TransactionExceptionType>>(
-  error: unknown,
-  knownNames: T
-): error is TypedDOMException<T[number]> => {
-  return error instanceof DOMException && (knownNames as ReadonlyArray<string>).includes(error.name)
-}
-export class IDBTransactionError extends Data.TaggedError("IDBTransactionError")<{
-  readonly message: string
-  readonly storeNames?: Array<string>
-  readonly mode?: IDBTransactionMode
-  readonly options?: IDBTransactionOptions
-  readonly cause: TypeError | TypedDOMException<TransactionOpenExceptionType | TransactionObjectStoreExceptionType>
-}> {}
-
 export const getRawTransactionFromRawDatabaseEffect = (
   db: IDBDatabase,
   params: IDBTransactionParams
 ) => {
   return Effect.try({
-    // https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase/transaction#exceptions
     try: () => db.transaction(params.storeNames, params.mode, params.options),
     catch: (error) => {
-      if (isKnownDOMException(error, TransactionOpenExceptionType) || error instanceof TypeError) {
-        return new IDBTransactionError({
-          message: `Sync error opening transaction with database.\n${error.message}`,
-          storeNames: params.storeNames,
-          mode: params.mode,
-          cause: error
-        })
-      }
+      const matched = IDBDatabaseTransactionOpenError.fromUnknown(error, params)
+      if (matched) return matched
       // defer with original error on unexpected errors
       throw error
     }
@@ -74,14 +36,14 @@ export const getRawObjectStoreFromRawTransactionEffect = (
   Effect.try({
     try: () => transaction.objectStore(storeName),
     catch: (error) => {
-      if (isKnownDOMException(error, TransactionObjectStoreExceptionType)) {
-        return new IDBTransactionError({
-          message: `Object store "${storeName}" not found in transaction. \n${error.message}`,
-          storeNames: [storeName],
-          mode: transaction.mode,
-          cause: error
-        })
-      }
+      const matched = IDBTransactionGetObjectStoreError.fromUnknown(error, {
+        mode: transaction.mode,
+        storeNames: Array.from(transaction.objectStoreNames),
+        options: {
+          durability: transaction.durability
+        }
+      })
+      if (matched) return matched
       throw error
     }
   })
@@ -139,6 +101,7 @@ export class TransactionRegistryService extends Context.Tag(`${CONTEXT_PREFIX}Tr
   static Live = Layer.effect(TransactionRegistryService, this.serviceEffect)
 }
 
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBTransaction#instance_methods
 const makeTransactionService = (permissions: "readonly" | "readwrite") =>
   Effect.gen(function*() {
     const registry = yield* TransactionRegistryService

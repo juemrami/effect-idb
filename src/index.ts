@@ -3,6 +3,7 @@ export {
   IDBDatabaseCreateObjectStoreError,
   IDBDatabaseDeleteObjectStoreError,
   IDBDatabaseOpenError,
+  IDBDatabaseTransactionOpenError,
   // index
   IDBIndexCountError,
   IDBIndexGetAllError,
@@ -17,7 +18,9 @@ export {
   IDBObjectStoreGetAllError,
   IDBObjectStoreGetError,
   IDBObjectStoreIndexError,
-  IDBObjectStorePutError
+  IDBObjectStorePutError,
+  // transaction
+  IDBTransactionGetObjectStoreError
 } from "./errors.js"
 export {
   type IDBDatabaseConfig,
@@ -27,5 +30,5 @@ export {
 } from "./idbdatabase.js"
 export { IDBObjectStoreService, TaggedIDBObjectStoreService } from "./idbobjectstore.js"
 export type { IDBObjectStoreConfig, IDBObjectStoreIndexParams } from "./idbobjectstore.js"
-export { IDBTransactionError, type IDBTransactionParams, IDBTransactionService } from "./idbtransaction.js"
+export { type IDBTransactionParams, IDBTransactionService } from "./idbtransaction.js"
 export { createDatabaseRuntime } from "./runtime.js"

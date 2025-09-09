@@ -1,6 +1,7 @@
 import { Data, Match } from "effect"
 import type { IDBDatabaseConfig } from "./idbdatabase.js"
 import type { IndexServiceOperations, StoreServiceOperations } from "./idbobjectstore.js"
+import type { IDBTransactionParams } from "./idbtransaction.js"
 
 export const isKnownDOMException = <T extends ReadonlyArray<string>>(
   error: unknown,
@@ -90,6 +91,83 @@ export class IDBDatabaseDeleteObjectStoreError extends Data.TaggedError("IDBData
     if (isKnownDOMException(error, IDBDatabaseOpValidExceptionNames.deleteObjectStore)) {
       return new IDBDatabaseDeleteObjectStoreError({
         message: `Sync error deleting object store. ${error}`,
+        cause: error
+      })
+    }
+    return null
+  }
+}
+
+/*******************************************************************************
+ * IDBTransaction Errors
+ *******************************************************************************/
+
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase/transaction#exceptions
+const TransactionOpenExceptionNames = [
+  "InvalidStateError", // Thrown if the close() method has previously been called on this IDBDatabase instance.
+  "NotFoundError", // Thrown if an object store specified in the 'storeNames' parameter has been deleted or removed.
+  "InvalidAccessError" // Thrown if the function was called with an empty list of store names.
+] as const
+export class IDBDatabaseTransactionOpenError extends Data.TaggedError("IDBDatabaseTransactionOpenError")<{
+  readonly message: string
+  readonly params: IDBTransactionParams
+  /** TypeError if version not a number > zero */
+  readonly cause: DomException<typeof TransactionOpenExceptionNames[number]> | TypeError
+}> {
+  static fromUnknown(error: unknown, params: IDBTransactionParams) {
+    if (
+      isKnownDOMException(error, TransactionOpenExceptionNames)
+      || error instanceof TypeError
+    ) {
+      return new IDBDatabaseTransactionOpenError({
+        message: `Sync error opening transaction with database. ${error}`,
+        params,
+        cause: error
+      })
+    }
+    return null
+  }
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBTransaction/abort#exceptions
+const IDBTransactionAbortExceptionNames = [
+  "InvalidStateError" // Thrown if the transaction has already committed or aborted.
+] as const
+// note: errors of this type will get swallowed during the upgrade process
+export class IDBTransactionAbortError extends Data.TaggedError("IDBTransactionAbortError")<{
+  readonly message: string
+  readonly params: IDBTransactionParams
+  readonly cause: DomException<typeof IDBTransactionAbortExceptionNames[number]>
+}> {
+  static fromUnknown(error: unknown, params: IDBTransactionParams) {
+    if (isKnownDOMException(error, IDBTransactionAbortExceptionNames)) {
+      return new IDBTransactionAbortError({
+        message: `Sync error aborting transaction. ${error}`,
+        params,
+        cause: error
+      })
+    }
+    return null
+  }
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBTransaction/objectStore#exceptions
+const TransactionObjectStoreExceptionNames = [
+  "NotFoundError", // Thrown if the requested object store is not in this transaction's scope.
+  "InvalidStateError" // Thrown if the request was made on an object that has been deleted or removed, or if the transaction has finished.
+] as const
+export class IDBTransactionGetObjectStoreError extends Data.TaggedError("IDBTransactionGetObjectStoreError")<{
+  readonly message: string
+  params: IDBTransactionParams
+  readonly cause: TypeError | DomException<typeof TransactionObjectStoreExceptionNames[number]>
+}> {
+  static fromUnknown(error: unknown, params: IDBTransactionParams) {
+    if (
+      isKnownDOMException(error, TransactionObjectStoreExceptionNames)
+    ) {
+      return new IDBTransactionGetObjectStoreError({
+        message: `Sync error getting object store from transaction. ${error}`,
+        params,
         cause: error
       })
     }

@@ -1,11 +1,11 @@
 import { Console, Effect, Layer } from "effect"
 import { indexedDB } from "fake-indexeddb"
 import { describe, expect, it } from "vitest"
-import { IDBDatabaseOpenError } from "../src/errors.js"
+import { IDBDatabaseOpenError, IDBDatabaseTransactionOpenError } from "../src/errors.js"
 import { IDBDatabaseService } from "../src/idbdatabase.js"
 import type { IDBObjectStoreConfig, IDBObjectStoreIndexParams } from "../src/idbobjectstore.js"
 import { IDBObjectStoreService } from "../src/idbobjectstore.js"
-import { IDBTransactionError, IDBTransactionService } from "../src/idbtransaction.js"
+import { IDBTransactionService } from "../src/idbtransaction.js"
 import { createDatabaseTestRuntime } from "./runtime.js"
 
 const ContactObjectStoreConfig = {
@@ -319,8 +319,8 @@ describe("Database Upgrade Service", () => {
 
     const result = await runtime.runPromise(testProgram)
     // expect result to be an object store not found transaction error
-    expect(result).toBeInstanceOf(IDBTransactionError)
-    expect(result.cause.name).toBe("NotFoundError")
+    expect(result).toBeInstanceOf(IDBDatabaseTransactionOpenError)
+    expect((result as IDBDatabaseTransactionOpenError).cause.name).toBe("NotFoundError")
     runtime.dispose()
   })
 })
