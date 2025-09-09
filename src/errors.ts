@@ -313,6 +313,8 @@ export const IDBIndexOperationErrorMap = {
  * IDBObjectStore Errors
  *******************************************************************************/
 
+type UpgradeSpecificStoreOperations = "createIndex" | "deleteIndex"
+
 export const StoreOpValidExceptionNames = {
   // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/add#exceptions
   add: [
@@ -370,8 +372,14 @@ export const StoreOpValidExceptionNames = {
     "InvalidStateError", // Thrown if method was not called from a versionchange transaction mode callback, or if the object store has been deleted
     "SyntaxError", // Thrown if the provided keyPath is not a valid key path
     "TransactionInactiveError" // Thrown if the transaction this IDBObjectStore belongs to is not active (e.g., has been deleted or removed)
+  ] as const,
+  // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/deleteIndex#exceptions
+  deleteIndex: [
+    "InvalidStateError", // DOMException Thrown if the method was not called from a versionchange transaction mode callback.
+    "TransactionInactiveError", // DOMException Thrown if the transaction this IDBObjectStore belongs to is not active (e.g., has been deleted or removed.)
+    "NotFoundError" // DOMException Thrown if there is no index with the given name (case-sensitive) in the database.
   ] as const
-} satisfies Record<StoreServiceOperations | "createIndex", ReadonlyArray<string>>
+} satisfies Record<StoreServiceOperations | UpgradeSpecificStoreOperations, ReadonlyArray<string>>
 
 type ValidStoreOperation = keyof typeof StoreOpValidExceptionNames
 
@@ -412,6 +420,7 @@ function storeErrPropsFromUnknown<const Op extends ValidStoreOperation, const Re
       Match.when("clear", () => `${syncText} error clearing object store. ${error}`),
       Match.when("index", () => `${syncText} error accessing index on object store. ${error}`),
       Match.when("createIndex", () => `${syncText} error creating index on object store. ${error}`),
+      Match.when("deleteIndex", () => `${syncText} error deleting index on object store. ${error}`),
       Match.exhaustive
     )(operation)
     return {
@@ -446,6 +455,9 @@ export class IDBObjectStoreIndexError extends Data.TaggedClass("IDBObjectStoreIn
 export class IDBObjectStoreCreateIndexError
   extends Data.TaggedClass("IDBObjectStoreCreateIndexError")<StoreErrorProps<"createIndex">>
 {}
+export class IDBObjectStoreDeleteIndexError
+  extends Data.TaggedClass("IDBObjectStoreDeleteIndexError")<StoreErrorProps<"deleteIndex">>
+{}
 
 export type IDBObjectStoreOperationErrorMap<Request extends boolean> = {
   add: IDBObjectStoreAddError<Request>
@@ -456,6 +468,7 @@ export type IDBObjectStoreOperationErrorMap<Request extends boolean> = {
   clear: IDBObjectStoreClearError<Request>
   index: IDBObjectStoreIndexError
   createIndex: IDBObjectStoreCreateIndexError
+  deleteIndex: IDBObjectStoreDeleteIndexError
 }
 
 export const IDBObjectStoreOperationErrorMap = {
@@ -475,6 +488,7 @@ export const IDBObjectStoreOperationErrorMap = {
       Match.when("clear", () => IDBObjectStoreClearError<Request>),
       Match.when("index", () => IDBObjectStoreIndexError),
       Match.when("createIndex", () => IDBObjectStoreCreateIndexError),
+      Match.when("deleteIndex", () => IDBObjectStoreDeleteIndexError),
       Match.exhaustive
     )(operation)
     // @ts-ignore `operation` should never have a conflicting type here

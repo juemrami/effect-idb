@@ -6,6 +6,7 @@ import type { RuntimeFiber } from "effect/Fiber"
 import { pipe } from "effect/Function"
 import * as Layer from "effect/Layer"
 import * as Ref from "effect/Ref"
+import type { DomException, IDBObjectStoreCreateIndexError } from "./errors.js"
 import {
   IDBDatabaseCreateObjectStoreError,
   IDBDatabaseDeleteObjectStoreError,
@@ -48,20 +49,6 @@ type DBServiceShape = Effect.Effect.Success<ReturnType<typeof createBaseService>
 
 const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgradeTxn: IDBTransaction) => {
   const baseService = Effect.runSync(createBaseService(db))
-  const addStoreIndex = (
-    store: IDBObjectStore,
-    index: IDBObjectStoreIndexParams
-  ) =>
-    Effect.try({
-      try: () => {
-        return store.createIndex(index.name, index.keyPath, index.options)
-      },
-      catch: (error) => {
-        const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "createIndex")
-        if (matched) return matched
-        else throw error
-      }
-    })
   // todo: improve typing to exclude CreateIndexError when indexes is empty/undefined
   const createObjectStore = (
     name: string,
@@ -69,7 +56,6 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
     indexes: Array<IDBObjectStoreIndexParams> = []
   ) =>
     pipe(
-      // call native db create function and get the store reference
       Effect.try({
         try: () => db.createObjectStore(name, options),
         catch: (error) => {
@@ -78,8 +64,20 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
           else throw error
         }
       }),
-      // create any specified indexes on the store
-      Effect.tap((store) => Effect.forEach(indexes, (index) => addStoreIndex(store, index)))
+      // also create any specified indexes on the store
+      Effect.tap((store) =>
+        Effect.forEach(indexes, (index) =>
+          Effect.try({
+            try: () => {
+              return store.createIndex(index.name, index.keyPath, index.options)
+            },
+            catch: (error) => {
+              const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "createIndex")
+              if (matched) return matched
+              else throw error
+            }
+          }))
+      )
     )
   const deleteObjectStore = (name: string) => {
     return pipe(Effect.try({
@@ -104,72 +102,149 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
       return incoming === existing
     }
   }
+  const makeObjectStoreUpgradeService = Effect.fn(function*(storeName) {
+    const storeUpgradeService = TransactionRegistryService.pipe(
+      Effect.andThen((tx) => tx.useObjectStore(storeName)),
+      Effect.andThen(
+        (rawStore) =>
+          pipe(
+            makeObjectStoreProxyService(storeName),
+            Effect.andThen((baseStoreService) => ({
+              ...baseStoreService,
+              createIndex: (index: IDBObjectStoreIndexParams) =>
+                Effect.try({
+                  try: () => rawStore.createIndex(index.name, index.keyPath, index.options),
+                  catch: (error) => {
+                    const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "createIndex")
+                    if (matched) return matched
+                    else throw error
+                  }
+                }),
+              deleteIndex: (indexName: string) =>
+                Effect.try({
+                  try: () => rawStore.deleteIndex(indexName),
+                  catch: (error) => {
+                    const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "deleteIndex")
+                    if (matched) return matched
+                    else throw error
+                  }
+                })
+            }))
+          )
+      ),
+      Effect.catchTags({
+        // Using the upgrade transaction which is already opened for us.
+        "IDBDatabaseTransactionOpenError": Effect.die
+      })
+    )
+    return yield* Effect.provideService(storeUpgradeService, TransactionRegistryService, {
+      // Mock registry service for upgrade transactions
+      addStore: (_) => baseService.objectStoreNames.pipe(Effect.map((stores) => new Set(stores))),
+      storeNames: baseService.objectStoreNames, // empty set of stores for upgrade transactions
+      makeTransaction: () => Effect.succeed(upgradeTxn), // use the upgrade transaction
+      useObjectStore: (storeName) => getRawObjectStoreFromRawTransactionEffect(upgradeTxn, storeName),
+      setPermissions: () => Effect.void // upgrade transactions are always readwrite
+    })
+  })
   return {
     ...baseService,
     createObjectStore,
     deleteObjectStore,
     /** Effect handle to the "versionchange" IDBTransaction */
     useTransaction: <A, E, R>(cb: (txn: IDBTransaction) => Effect.Effect<A, E, R>) => cb(upgradeTxn),
-    objectStore: Effect.fn(function*(storeName) {
-      return yield* makeObjectStoreProxyService(storeName).pipe(Effect.provideService(TransactionRegistryService, {
-        // Mock registry service for upgrade transactions
-        addStore: (_) => baseService.objectStoreNames.pipe(Effect.map((stores) => new Set(stores))),
-        storeNames: baseService.objectStoreNames, // empty set of stores for upgrade transactions
-        makeTransaction: () => Effect.succeed(upgradeTxn), // use the upgrade transaction
-        useObjectStore: (storeName) => getRawObjectStoreFromRawTransactionEffect(upgradeTxn, storeName),
-        setPermissions: () => Effect.void // upgrade transactions are always readwrite
-      }))
-    }),
+    objectStore: makeObjectStoreUpgradeService,
     /** Automatically generate defined object stores and their indexes. Destructively validates index configurations. */
-    autoGenerateObjectStores: Effect.gen(function*() {
-      // Create all object stores if they don't exist
-      yield* Effect.forEach(config.autoObjectStores ?? [], (store) =>
-        Effect.gen(function*() {
-          const storeConfig = "Config" in store ? store.Config : store
-          // if the store config is a layer, extract the config
-          // check if store already exists & perform any index migrations if so
-          if (db.objectStoreNames.contains(storeConfig.name)) {
-            const store = yield* getRawObjectStoreFromRawTransactionEffect(upgradeTxn, storeConfig.name)
-            const existingIndexNames = Array.from(store.indexNames)
-            // Add or modify indexes
-            yield* Effect.forEach(
-              storeConfig.indexes,
-              Effect.fn(function*(incoming) {
-                if (existingIndexNames.includes(incoming.name)) {
-                  // on existing, check if options match & remake any indexes that differ
-                  // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/index#exceptions
-                  const existing = store.index(incoming.name) // todo: sync error handling
-                  if (
-                    !keyPathsMatch(incoming.keyPath, existing.keyPath) ||
-                    (incoming.options && existing.unique !== incoming.options.unique) ||
-                    (incoming.options && existing.multiEntry !== incoming.options.multiEntry)
-                  ) {
-                    // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/deleteIndex#exceptions
-                    store.deleteIndex(incoming.name) // todo: sync error handling
-                    yield* addStoreIndex(store, incoming)
-                  }
-                } else {
-                  // Add any new indexes
-                  yield* addStoreIndex(store, incoming)
+    autoGenerateObjectStores: Effect.forEach(
+      config.autoObjectStores ?? [],
+      Effect.fn(function*(configStore) {
+        const storeConfig = "Config" in configStore ? configStore.Config : configStore
+        // if the store config is a layer, extract the config
+        // check if store already exists & perform any index migrations if so
+        if (db.objectStoreNames.contains(storeConfig.name)) {
+          const storeUpgradeService = yield* makeObjectStoreUpgradeService(storeConfig.name)
+          const existingIndexNames = Array.from(yield* storeUpgradeService.indexNames)
+          yield* Effect.forEach(
+            storeConfig.indexes,
+            Effect.fn(function*(incoming) {
+              // on existing indexes, check if options match & remake any indexes that differ
+              if (existingIndexNames.includes(incoming.name)) {
+                const existing = yield* storeUpgradeService.index(incoming.name).pipe(
+                  // Accessing index should'nt error since were in an upgrade txn and already checked the store & index exists.
+                  Effect.orDie
+                )
+                if (
+                  !keyPathsMatch(incoming.keyPath, existing.keyPath) ||
+                  (incoming.options && existing.unique !== incoming.options.unique) ||
+                  (incoming.options && existing.multiEntry !== incoming.options.multiEntry)
+                ) {
+                  // https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore/deleteIndex#exceptions
+                  yield* pipe(
+                    storeUpgradeService.deleteIndex(incoming.name),
+                    // Shouldn't error since index exists and we are in a versionchange txn
+                    Effect.orDie,
+                    Effect.andThen(storeUpgradeService.createIndex(incoming)),
+                    // In this context index creation actually can still fail if:
+                    // keyPath & multiEntry combination is invalid, or keyPath is invalid
+                    Effect.catchTag("IDBObjectStoreCreateIndexError", (e) => {
+                      if (e.cause.name === "InvalidAccessError" || e.cause.name === "SyntaxError") {
+                        return Effect.fail(
+                          e as IDBObjectStoreCreateIndexError & {
+                            cause: DomException<"InvalidAccessError" | "SyntaxError">
+                          }
+                        )
+                      }
+                      throw e // defect if unexpected error
+                    })
+                  )
                 }
-              })
-            )
-            // Finally delete any indexes that no longer exist in the config (assumed deprecated)
-            existingIndexNames.forEach((indexName) => {
-              if (!storeConfig.indexes?.some((index) => index.name === indexName)) {
-                store.deleteIndex(indexName) // todo: sync error handling
+              } else { // for newly declared indexes simply create them
+                yield* pipe(
+                  storeUpgradeService.createIndex(incoming),
+                  Effect.catchTag("IDBObjectStoreCreateIndexError", (e) => {
+                    if (e.cause.name === "InvalidAccessError" || e.cause.name === "SyntaxError") {
+                      return Effect.fail(
+                        e as IDBObjectStoreCreateIndexError & {
+                          cause: DomException<"InvalidAccessError" | "SyntaxError">
+                        }
+                      )
+                    }
+                    throw e
+                  })
+                )
               }
             })
-          } else {
-            // create the store and any indexes
-            yield* createObjectStore(
-              storeConfig.name,
-              storeConfig.params,
-              storeConfig.indexes
-            )
-          }
-        }))
-    })
+          )
+          // delete any indexes that no longer exist in the config (assumed deprecated)
+          yield* Effect.forEach(
+            existingIndexNames,
+            Effect.fn(function*(indexName) {
+              if (!storeConfig.indexes?.some((index) => index.name === indexName)) {
+                yield* storeUpgradeService.deleteIndex(indexName).pipe(
+                  // again, shouldn't error since index exists and we are in a versionchange txn
+                  Effect.orDie
+                )
+              }
+            })
+          )
+        } else { // create the store and any indexes
+          yield* pipe(
+            createObjectStore(storeConfig.name, storeConfig.params, storeConfig.indexes),
+            // In this context creating a store this can still fail if:
+            // InvalidAccessError (invalid autoIncrement and keyPath combination), SyntaxError (invalid keyPath or options)
+            Effect.catchTag("IDBDatabaseCreateObjectStoreError", (e) => {
+              if (e.cause.name === "InvalidAccessError" || e.cause.name === "SyntaxError") {
+                return Effect.fail(
+                  e as IDBDatabaseCreateObjectStoreError & {
+                    cause: DomException<"InvalidAccessError" | "SyntaxError">
+                  }
+                )
+              }
+              throw e
+            })
+          )
+        }
+      })
+    )
   }
 }
 export type IDBDatabaseConfig = {
