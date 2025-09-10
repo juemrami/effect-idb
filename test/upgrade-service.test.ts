@@ -1,6 +1,6 @@
-import { Console, Effect, Layer } from "effect"
+import { Cause, Console, Effect, Exit, Layer, pipe } from "effect"
 import { indexedDB } from "fake-indexeddb"
-import { describe, expect, it } from "vitest"
+import { assert, describe, expect, it } from "vitest"
 import { IDBDatabaseOpenError, IDBDatabaseTransactionOpenError } from "../src/errors.js"
 import { IDBDatabaseService } from "../src/idbdatabase.js"
 import type { IDBObjectStoreConfig, IDBObjectStoreIndexParams } from "../src/idbobjectstore.js"
@@ -32,7 +32,9 @@ class ContactObjectStore extends Effect.Service<ContactObjectStore>()(
       return yield* IDBObjectStoreService
     })
   }
-) {}
+) {
+  static Config = ContactObjectStoreConfig
+}
 
 const NotesObjectStoreConfig: IDBObjectStoreConfig = {
   name: "notes",
@@ -53,12 +55,16 @@ class NotesObjectStore extends Effect.Service<NotesObjectStore>()(
       return yield* IDBObjectStoreService
     })
   }
-) {}
+) {
+  static Config = NotesObjectStoreConfig
+}
 
 describe("Database Upgrade Service", () => {
   it("should auto generate new object stores on database upgrade events", async () => {
+    const dbName = "testDB"
+    indexedDB.deleteDatabase(dbName)
     const runtime = createDatabaseTestRuntime({
-      name: "testDB",
+      name: dbName,
       version: 1,
       // maybe this could be a way to define object stores that will be automatically created when not present
       autoObjectStores: [ContactObjectStoreConfig, NotesObjectStoreConfig],
@@ -93,6 +99,9 @@ describe("Database Upgrade Service", () => {
   })
 
   it("should handle auto migrations of object store index schemas", async () => {
+    const dbName = "indexAutoMigrationTestDB"
+    indexedDB.deleteDatabase(dbName)
+    // Define different index schemas for different versions
     const INDEX_SCHEMAS: Record<number, Array<IDBObjectStoreIndexParams>> = {
       1: [
         { name: "name", keyPath: "name" }
@@ -122,7 +131,7 @@ describe("Database Upgrade Service", () => {
       // Use unique database name for each version to avoid interference
       const targetSchema = INDEX_SCHEMAS[Number(version)]
       const runtime = createDatabaseTestRuntime({
-        name: `testDB_migrations`,
+        name: dbName,
         version: Number(version),
         autoObjectStores: [{ ...ContactObjectStoreConfig, indexes: targetSchema }]
         // No need to provide onUpgradeNeeded here since we are testing auto migrations
@@ -182,6 +191,9 @@ describe("Database Upgrade Service", () => {
   })
 
   it("should handle working with object stores within an upgrade needed effect", async () => {
+    const dbName = "upgradeObjectStoreTestDB"
+    indexedDB.deleteDatabase(dbName)
+
     type Note = {
       id?: number
       title: string
@@ -189,7 +201,7 @@ describe("Database Upgrade Service", () => {
       createdAt: Date
     }
     const runtime = createDatabaseTestRuntime({
-      name: "upgradeObjectStoreTestDB",
+      name: dbName,
       version: 2,
       autoObjectStores: [ContactObjectStoreConfig, NotesObjectStoreConfig],
       onUpgradeNeeded: (upgradeService) => ({
@@ -240,63 +252,175 @@ describe("Database Upgrade Service", () => {
     const result = await runtime.runPromise(testProgram)
     expect(result).toBeUndefined() // Should complete without errors
   })
-  it("should roll back any index schema changes after an upgrade failure", async () => {
+  it("should roll back any index schema changes after an unexpected upgrade failure", async () => {
+    const dbName = "indexRollbackTestDB"
+    indexedDB.deleteDatabase(dbName)
+
     // step 1 declare and object store with an index schema
-    const dbLayer = IDBDatabaseService.makeTest({
-      name: "upgradeRollbackTestDB",
-      version: 2,
-      autoObjectStores: [{
-        ...ContactObjectStoreConfig,
-        indexes: [
-          { name: "name", keyPath: "name" },
-          { name: "email", keyPath: "email" },
-          { name: "createdAt", keyPath: "createdAt", options: { unique: false } },
-          { name: "compositeKey", keyPath: ["name", "email"], options: { unique: false } }
-        ]
-      }],
-      onUpgradeNeeded: (upgradeService) => ({
-        1: upgradeService.autoGenerateObjectStores,
-        // step 2: modify part of the index schema, ensure it was changed
-        2: Effect.gen(function*() {
-          const store = yield* upgradeService.useTransaction((upgradeTxn) =>
-            Effect.gen(function*() {
-              upgradeTxn.objectStore(ContactObjectStoreConfig.name).deleteIndex("createdAt")
-              const store = upgradeTxn.objectStore(ContactObjectStoreConfig.name)
-              return yield* Effect.succeed(store)
-            })
-          )
-          const indexNames = Array.from(store.indexNames)
-          expect(indexNames).not.toContain("createdAt")
-          // step 3: cause and error in the upgrade process
-          yield* Effect.fail("Simulated upgrade failure")
+    const UnexpectedUpgradeError = new Error("Unexpected Upgrade Error")
+    const makeDbLayer = (version?: number) => {
+      return IDBDatabaseService.makeTest({
+        name: dbName,
+        version, // undefined opens to latest db version
+        autoObjectStores: [{
+          ...ContactObjectStoreConfig,
+          indexes: [
+            { name: "name", keyPath: "name" },
+            { name: "email", keyPath: "email" },
+            { name: "createdAt", keyPath: "createdAt", options: { unique: false } },
+            { name: "compositeKey", keyPath: ["name", "email"], options: { unique: false } }
+          ]
+        }],
+        onUpgradeNeeded: (upgradeService) => ({
+          1: upgradeService.autoGenerateObjectStores,
+          // step 2: modify part of the index schema, ensure it was changed
+          2: Effect.gen(function*() {
+            const store = yield* upgradeService.useTransaction((upgradeTxn) =>
+              Effect.gen(function*() {
+                upgradeTxn.objectStore(ContactObjectStoreConfig.name).deleteIndex("createdAt")
+                const store = upgradeTxn.objectStore(ContactObjectStoreConfig.name)
+                return yield* Effect.succeed(store)
+              })
+            )
+            const indexNames = Array.from(store.indexNames)
+            expect(indexNames).not.toContain("createdAt")
+            // step 3: cause and error in the upgrade process
+            yield* Console.log("failing")
+            yield* Effect.fail(UnexpectedUpgradeError)
+          })
         })
-      })
-    }, indexedDB)
-    const upgradeFailure = await Effect.runPromise(Effect.flip(
-      Effect.gen(function*() {
-        yield* Console.log("Running upgrade rollback test...") // this wont be reached. layer will fail on construction
-      }).pipe(
-        Effect.provide(dbLayer)
+      }, indexedDB)
+    }
+    const dbWithUpgradeFailureLayer = makeDbLayer(2)
+    const dbLayer = makeDbLayer() // for running verification steps
+    const upgradeFailureExit = await Effect.runPromiseExit(
+      pipe(
+        Console.log("Running upgrade test..."), // this wont be reached, will fail on dbLayer construction
+        Effect.provide(dbWithUpgradeFailureLayer)
+        // Effect.catchAllDefect((_) => Effect.fail(UnexpectedUpgradeError))
       )
-    ))
-    expect(upgradeFailure).toBeInstanceOf(IDBDatabaseOpenError)
-    expect(upgradeFailure.message).toContain("Simulated upgrade failure")
-    // step 4: verify the index schema was rolled back to the original state
-    const testProgram = Effect.gen(function*() {
-      const txn = yield* IDBTransactionService
-      const store = yield* txn.use((idbTxn) => Effect.sync(() => idbTxn.objectStore(ContactObjectStoreConfig.name)), {
-        storeNames: [ContactObjectStoreConfig.name]
-      })
-      const indexNames = Array.from(store.indexNames)
-      expect(indexNames).toContain("createdAt")
-    }).pipe(
-      Effect.provide(IDBTransactionService.ReadOnly)
     )
-    await Effect.runPromise(testProgram.pipe(Effect.provide(dbLayer)))
+    Exit.match(upgradeFailureExit, {
+      onFailure: (cause) => {
+        expect(Cause.isFailType(cause)).toBe(true)
+        type E = (typeof cause) extends Cause.Cause<infer E> ? E : never
+        expect((cause as Cause.Fail<E>).error!).toBeInstanceOf(IDBDatabaseOpenError)
+        expect((cause as Cause.Fail<IDBDatabaseOpenError>).error.cause.name).toBe("AbortError")
+        const upgradeCause = (cause as Cause.Fail<IDBDatabaseOpenError>).error.upgradeCause
+        expect(upgradeCause).toBeDefined()
+        expect(Cause.isFailType(upgradeCause!)).toBe(true)
+        expect((upgradeCause as Cause.Fail<unknown>).error).toBeInstanceOf(UnexpectedUpgradeError.constructor)
+      },
+      onSuccess: (_) => {
+        assert(false, "Expected upgrade to fail, but it succeeded")
+      }
+    })
+
+    // step 4: verify the index schema was rolled back to the original state
+    const rollbackExit = await Effect.runPromiseExit(pipe(
+      Effect.gen(function*() {
+        const database = yield* IDBDatabaseService
+        expect(database.version).toBe(1) // rolled back to version 1
+        const txn = yield* IDBTransactionService
+        const store = yield* txn.use((idbTxn) => Effect.sync(() => idbTxn.objectStore(ContactObjectStoreConfig.name)), {
+          storeNames: [ContactObjectStoreConfig.name]
+        })
+        const indexNames = Array.from(store.indexNames)
+        expect(indexNames).toContain("createdAt")
+      }),
+      Effect.provide(IDBTransactionService.ReadOnly),
+      Effect.provide(dbLayer)
+    ))
+    Exit.match(rollbackExit, {
+      onFailure: (cause) => {
+        assert(false, "Rollback verification failed but expected to succeed. \n" + cause)
+      },
+      // success means the index schema is as expected
+      onSuccess: (_) => void 0
+    })
+  })
+  it("should roll back any object store __SET__ changes after an upgrade failure", async () => {
+    const dbName = "objectDataRollbackTestDB"
+    indexedDB.deleteDatabase(dbName)
+
+    const UnexpectedUpgradeError = new Error("Unexpected Upgrade Error")
+    const StoreSet = [ContactObjectStore, NotesObjectStore]
+    const createDbLayer = (version?: number) =>
+      IDBDatabaseService.makeTest({
+        name: dbName,
+        version,
+        autoObjectStores: StoreSet,
+        onUpgradeNeeded: (upgradeService) => ({
+          1: Effect.gen(function*() {
+            // todo: this should yield* the created stores
+            yield* upgradeService.autoGenerateObjectStores
+            const storeNames = yield* upgradeService.objectStoreNames
+            // verify the data was added
+            for (const store of StoreSet) {
+              expect(storeNames).toContain(store.Config.name)
+            }
+            expect(storeNames.length).toBe(StoreSet.length)
+          }),
+          2: Effect.gen(function*() {
+            // delete a datastore
+            yield* upgradeService.deleteObjectStore(StoreSet[1].Config.name)
+            const storeNames = yield* upgradeService.objectStoreNames
+            expect(storeNames).not.toContain(StoreSet[1].Config.name)
+            expect(storeNames.length).toBe(StoreSet.length - 1)
+            // step 3: cause an error in the upgrade process
+            yield* Effect.fail(UnexpectedUpgradeError)
+          })
+        })
+      }, indexedDB)
+
+    const dbWithUpgradeFailureLayer = createDbLayer(2)
+    const dbLayer = createDbLayer() // for running verification steps
+    const upgradeFailureExit = await Effect.runPromiseExit(
+      pipe(
+        Console.log("Running upgrade test..."), // this wont be reached, will fail on dbLayer construction
+        Effect.provide(dbWithUpgradeFailureLayer),
+        Effect.catchAllDefect((_) => Effect.fail(UnexpectedUpgradeError))
+      )
+    )
+    Exit.match(upgradeFailureExit, {
+      onFailure: (cause: any) => {
+        expect(Cause.isFailType(cause)).toBe(true)
+        expect(cause.error).toBeInstanceOf(IDBDatabaseOpenError)
+        expect((cause.error as IDBDatabaseOpenError).cause.name).toBe("AbortError")
+        const upgradeCause = (cause.error as IDBDatabaseOpenError).upgradeCause
+        expect(upgradeCause).toBeDefined()
+        expect(Cause.isFailType(upgradeCause!)).toBe(true)
+        expect((upgradeCause as Cause.Fail<unknown>).error).toBeInstanceOf(UnexpectedUpgradeError.constructor)
+      },
+      onSuccess: (_) => {
+        assert(false, "Expected upgrade process to fail, but succeeded")
+      }
+    })
+
+    // step 4: verify the set was rolled back to the original state
+    const rollbackExit = await Effect.runPromiseExit(pipe(
+      Effect.gen(function*() {
+        const db = yield* IDBDatabaseService
+        expect(db.version).toBe(1) // rolled back to version 1
+        return yield* db.objectStoreNames
+      }),
+      Effect.provide(dbLayer)
+    ))
+    Exit.match(rollbackExit, {
+      onFailure: (cause) => {
+        assert(false, "Rollback verification failed but expected to succeed. \n" + cause)
+      },
+      onSuccess: (storNames) => {
+        expect(storNames).toEqual(StoreSet.map((store) => store.Config.name))
+      }
+    })
   })
   it("should skip auto-generating object stores when a custom upgrade function is provided", async () => {
+    const dbName = "customUpgradeTestDB"
+    indexedDB.deleteDatabase(dbName)
+
     const runtime = createDatabaseTestRuntime({
-      name: "customUpgradeTestDB",
+      name: dbName,
       version: 1,
       autoObjectStores: [ContactObjectStoreConfig],
       onUpgradeNeeded: (_) => ({

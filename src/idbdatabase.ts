@@ -1,8 +1,7 @@
+import type { Cause } from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
-import * as Fiber from "effect/Fiber"
-import type { RuntimeFiber } from "effect/Fiber"
 import { pipe } from "effect/Function"
 import * as Layer from "effect/Layer"
 import * as Ref from "effect/Ref"
@@ -46,123 +45,126 @@ const createBaseService = Effect.fn(function*(db: IDBDatabase) {
   }
 })
 type DBServiceShape = Effect.Effect.Success<ReturnType<typeof createBaseService>>
-
-const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgradeTxn: IDBTransaction) => {
-  const baseService = Effect.runSync(createBaseService(db))
-  // todo: improve typing to exclude CreateIndexError when indexes is empty/undefined
-  const createObjectStore = (
-    name: string,
-    options?: IDBObjectStoreParameters,
-    indexes: Array<IDBObjectStoreIndexParams> = []
-  ) =>
-    pipe(
-      Effect.try({
-        try: () => db.createObjectStore(name, options),
+/** Creates a version of IDBDatabaseService with additional methods that can only be used during the IDB's onupgradeneeded handler
+ * Object stores accessed via this service's `.objectStore` are similarly extended versions of IDBObjectStoreService.
+ */
+const createUpgradeService = Effect.fn(
+  function*(db: IDBDatabase, config: IDBDatabaseConfig, upgradeTxn: IDBTransaction) {
+    const baseService = yield* createBaseService(db)
+    // todo: improve typing to exclude CreateIndexError when indexes is empty/undefined
+    const createObjectStore = (
+      name: string,
+      options?: IDBObjectStoreParameters,
+      indexes: Array<IDBObjectStoreIndexParams> = []
+    ) =>
+      pipe(
+        Effect.try({
+          try: () => db.createObjectStore(name, options),
+          catch: (error) => {
+            const matched = IDBDatabaseCreateObjectStoreError.fromUnknown(error)
+            if (matched) return matched
+            else throw error
+          }
+        }),
+        // also create any specified indexes on the store
+        Effect.tap((store) =>
+          Effect.forEach(indexes, (index) =>
+            Effect.try({
+              try: () => {
+                return store.createIndex(index.name, index.keyPath, index.options)
+              },
+              catch: (error) => {
+                const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "createIndex")
+                if (matched) return matched
+                else throw error
+              }
+            }))
+        )
+      )
+    const deleteObjectStore = (name: string) => {
+      return pipe(Effect.try({
+        try: () => db.deleteObjectStore(name),
         catch: (error) => {
-          const matched = IDBDatabaseCreateObjectStoreError.fromUnknown(error)
+          const matched = IDBDatabaseDeleteObjectStoreError.fromUnknown(error)
           if (matched) return matched
           else throw error
         }
-      }),
-      // also create any specified indexes on the store
-      Effect.tap((store) =>
-        Effect.forEach(indexes, (index) =>
-          Effect.try({
-            try: () => {
-              return store.createIndex(index.name, index.keyPath, index.options)
-            },
-            catch: (error) => {
-              const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "createIndex")
-              if (matched) return matched
-              else throw error
-            }
-          }))
-      )
-    )
-  const deleteObjectStore = (name: string) => {
-    return pipe(Effect.try({
-      try: () => db.deleteObjectStore(name),
-      catch: (error) => {
-        const matched = IDBDatabaseDeleteObjectStoreError.fromUnknown(error)
-        if (matched) return matched
-        else throw error
-      }
-    }))
-  }
-  type KeyPath = string | Array<string>
-  const keyPathsMatch = (incoming: KeyPath, existing: KeyPath) => {
-    if (Array.isArray(incoming) && Array.isArray(existing)) {
-      // both are arrays, check if they match
-      return (incoming.length === existing.length &&
-        incoming.every((key, index) => key === existing[index]))
-    } else if (Array.isArray(incoming) || Array.isArray(existing)) {
-      // one is an array, the other is a string, they cannot match
-      return false
-    } else { // both are strings
-      return incoming === existing
+      }))
     }
-  }
-  const makeObjectStoreUpgradeService = Effect.fn(function*(storeName) {
-    const storeUpgradeService = TransactionRegistryService.pipe(
-      Effect.andThen((tx) => tx.useObjectStore(storeName)),
-      Effect.andThen(
-        (rawStore) =>
-          pipe(
-            makeObjectStoreProxyService(storeName),
-            Effect.andThen((baseStoreService) => ({
-              ...baseStoreService,
-              createIndex: (index: IDBObjectStoreIndexParams) =>
-                Effect.try({
-                  try: () => rawStore.createIndex(index.name, index.keyPath, index.options),
-                  catch: (error) => {
-                    const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "createIndex")
-                    if (matched) return matched
-                    else throw error
-                  }
-                }),
-              deleteIndex: (indexName: string) =>
-                Effect.try({
-                  try: () => rawStore.deleteIndex(indexName),
-                  catch: (error) => {
-                    const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "deleteIndex")
-                    if (matched) return matched
-                    else throw error
-                  }
-                })
-            }))
-          )
-      ),
-      Effect.catchTags({
-        // Using the upgrade transaction which is already opened for us.
-        "IDBDatabaseTransactionOpenError": Effect.die
+    type KeyPath = string | Array<string>
+    const keyPathsMatch = (incoming: KeyPath, existing: KeyPath) => {
+      if (Array.isArray(incoming) && Array.isArray(existing)) {
+        // both are arrays, check if they match
+        return (incoming.length === existing.length &&
+          incoming.every((key, index) => key === existing[index]))
+      } else if (Array.isArray(incoming) || Array.isArray(existing)) {
+        // one is an array, the other is a string, they cannot match
+        return false
+      } else { // both are strings
+        return incoming === existing
+      }
+    }
+    const getObjectStoreUpgradeService = Effect.fn(function*(storeName) {
+      const storeUpgradeService = TransactionRegistryService.pipe(
+        Effect.andThen((tx) => tx.useObjectStore(storeName)),
+        Effect.andThen(
+          (rawStore) =>
+            pipe(
+              makeObjectStoreProxyService(storeName),
+              Effect.andThen((baseStoreService) => ({
+                ...baseStoreService,
+                createIndex: (index: IDBObjectStoreIndexParams) =>
+                  Effect.try({
+                    try: () => rawStore.createIndex(index.name, index.keyPath, index.options),
+                    catch: (error) => {
+                      const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "createIndex")
+                      if (matched) return matched
+                      else throw error
+                    }
+                  }),
+                deleteIndex: (indexName: string) =>
+                  Effect.try({
+                    try: () => rawStore.deleteIndex(indexName),
+                    catch: (error) => {
+                      const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "deleteIndex")
+                      if (matched) return matched
+                      else throw error
+                    }
+                  })
+              }))
+            )
+        ),
+        Effect.catchTags({
+          // Using the upgrade transaction which is already opened for us.
+          "IDBDatabaseTransactionOpenError": Effect.die
+        })
+      )
+      return yield* Effect.provideService(storeUpgradeService, TransactionRegistryService, {
+        // Mock registry service for upgrade transactions
+        addStore: (_) => baseService.objectStoreNames.pipe(Effect.map((stores) => new Set(stores))),
+        storeNames: baseService.objectStoreNames, // empty set of stores for upgrade transactions
+        makeTransaction: () => Effect.succeed(upgradeTxn), // use the upgrade transaction
+        useObjectStore: (storeName) => getRawObjectStoreFromRawTransactionEffect(upgradeTxn, storeName),
+        setPermissions: () => Effect.void // upgrade transactions are always readwrite
       })
-    )
-    return yield* Effect.provideService(storeUpgradeService, TransactionRegistryService, {
-      // Mock registry service for upgrade transactions
-      addStore: (_) => baseService.objectStoreNames.pipe(Effect.map((stores) => new Set(stores))),
-      storeNames: baseService.objectStoreNames, // empty set of stores for upgrade transactions
-      makeTransaction: () => Effect.succeed(upgradeTxn), // use the upgrade transaction
-      useObjectStore: (storeName) => getRawObjectStoreFromRawTransactionEffect(upgradeTxn, storeName),
-      setPermissions: () => Effect.void // upgrade transactions are always readwrite
     })
-  })
-  return {
-    ...baseService,
-    createObjectStore,
-    deleteObjectStore,
-    /** Effect handle to the "versionchange" IDBTransaction */
-    useTransaction: <A, E, R>(cb: (txn: IDBTransaction) => Effect.Effect<A, E, R>) => cb(upgradeTxn),
-    objectStore: makeObjectStoreUpgradeService,
-    /** Automatically generate defined object stores and their indexes. Destructively validates index configurations. */
-    autoGenerateObjectStores: Effect.forEach(
-      config.autoObjectStores ?? [],
-      Effect.fn(function*(configStore) {
+    const upsertObjectStore = Effect.fn(
+      function*(
+        configStore: IDBObjectStoreConfig | { Config: IDBObjectStoreConfig }
+      ) {
         const storeConfig = "Config" in configStore ? configStore.Config : configStore
-        // if the store config is a layer, extract the config
         // check if store already exists & perform any index migrations if so
         if (db.objectStoreNames.contains(storeConfig.name)) {
-          const storeUpgradeService = yield* makeObjectStoreUpgradeService(storeConfig.name)
-          const existingIndexNames = Array.from(yield* storeUpgradeService.indexNames)
+          const storeUpgradeService = yield* getObjectStoreUpgradeService(storeConfig.name).pipe(
+            // getting the objectstore from the upgrade transaction should never fail here.
+            Effect.orDie
+          )
+          const existingIndexNames = Array.from(
+            yield* storeUpgradeService.indexNames.pipe(
+              // upgrade transaction is already open & object store exists, so this should also never fail
+              Effect.orDie
+            )
+          )
           yield* Effect.forEach(
             storeConfig.indexes,
             Effect.fn(function*(incoming) {
@@ -243,10 +245,20 @@ const createUpgradeService = (db: IDBDatabase, config: IDBDatabaseConfig, upgrad
             })
           )
         }
-      })
+      }
     )
+    return {
+      ...baseService,
+      createObjectStore,
+      deleteObjectStore,
+      /** Effect handle to the "versionchange" IDBTransaction */
+      useTransaction: <A, E, R>(cb: (txn: IDBTransaction) => Effect.Effect<A, E, R>) => cb(upgradeTxn),
+      objectStore: getObjectStoreUpgradeService,
+      /** Automatically generate defined object stores and their indexes. Destructively validates index configurations. */
+      autoGenerateObjectStores: Effect.forEach(config.autoObjectStores ?? [], upsertObjectStore)
+    }
   }
-}
+)
 export type IDBDatabaseConfig = {
   /** The name of the database */
   name: string
@@ -255,7 +267,9 @@ export type IDBDatabaseConfig = {
    * or
    * 2. Open the latest version of the database if it already exists.
    */
-  version?: number
+  // Note: with `exactOptionalPropertyTypes: true`, callers setting `version: undefined`
+  // must be explicitly allowed. Hence `number | undefined`.
+  version?: number | undefined
   /** Array of object store configurations include in the auto upgrade process of `upgradeService.autoGenerateObjectStores` */
   autoObjectStores?: Array<IDBObjectStoreConfig | { Config: IDBObjectStoreConfig }>
   /** `Record` of effects for each database version describing any schema changes (object stores name and their indices). \
@@ -264,7 +278,7 @@ export type IDBDatabaseConfig = {
    * This is in contrast to the standard IDB behavior, which does not create any object stores
    * unless explicitly defined during the upgrade process. */
   onUpgradeNeeded?: (
-    upgradeService: ReturnType<typeof createUpgradeService>
+    upgradeService: Effect.Effect.Success<ReturnType<typeof createUpgradeService>>
   ) => Record<number, Effect.Effect<any, any, never>>
 }
 export class IDBDatabaseService
@@ -283,6 +297,7 @@ export class IDBDatabaseService
            * - new database version opened on another tab
            * - or before db version upgrades
            * - or db deletions (new db connections cant upgrade till old ones are closed)
+           * - .close raises no errors
            */
           (db) => Effect.sync(() => db.close())
         )
@@ -300,136 +315,125 @@ export class IDBDatabaseService
       IDBFactoryService.makeTest(indexedDB)
     )
 }
-// unsure if this wrapper is needed or just makes this more complex.
-export class IDBFactoryService extends Context.Tag(`${CONTEXT_PREFIX}FactoryService`)<
-  IDBFactoryService,
-  {
-    open: (config: IDBDatabaseConfig) => Effect.Effect<IDBDatabase, IDBDatabaseOpenError>
-    // close: (name: string) => Effect.Effect<void, Error>;
-    // isOpen: (name: string) => Effect.Effect<boolean, Error>;
-  }
->() {
-  static DefaultNoDependencies = Layer.effect(
-    IDBFactoryService,
-    Effect.gen(function*() {
-      const indexedDB = yield* IDBFactoryImplementation
-      return {
-        open: (config: IDBDatabaseConfig) =>
-          Effect.gen(function*() {
-            const request = yield* Effect.try({
-              // https://developer.mozilla.org/en-US/docs/Web/API/IDBFactory/open#exceptions
-              try: () => indexedDB.open(config.name, config.version),
-              catch: (error) => {
-                const matched = IDBDatabaseOpenError.fromUnknown(error, config)
-                if (matched) return matched
-                else throw error // defect with original error
-              }
-            })
-            const dbConnection = yield* Effect.async<IDBDatabase, IDBDatabaseOpenError>((resume, _signal) => {
-              // Read to understand possible order of these event cbs
-              // https://w3c.github.io/IndexedDB/#dom-idbfactory-open
-              /**
-               * Notes:
-               *  - `.open` request will hang when attempting to open a new version, while db is being use in other tabs.
-               *    - to work around, the 'versionchange' event can be listened for and one can abort any live txns
-               *  - `.onerror` event will fire for any event error that isn't caught in the lifetime of the db connection.
-               *    - this includes error from deeper events like object store operation requests.
-               */
-              let upgradeFiber: RuntimeFiber<Array<any>, any> | undefined
-              // upgrade needed handler fired on first (lifetime) db opens or a when new version is passed to `open`
-              request.onupgradeneeded = (event) => {
-                if (config.onUpgradeNeeded === undefined && config.autoObjectStores === undefined) return
-                if (event.newVersion === null) { //
-                  //  this means the database is being deleted.
-                  return
-                }
-                // Because we are bound by this async handler system that lives in JS world
-                // not sure how to re-pop back into Effect world to execute any effects for the upgrade logic,
-                // (besides to runSync it
-                const dbConnection = (event.target! as IDBOpenDBRequest).result
-                // special "versionchange" transaction used in the upgrade service
-                const transaction = (event.target! as IDBOpenDBRequest).transaction!
-                const startVersion = event.oldVersion + 1
-                const endVersion = dbConnection.version
+export class IDBFactoryService extends Effect.Service<IDBFactoryService>()(`${CONTEXT_PREFIX}FactoryService`, {
+  effect: Effect.gen(function*() {
+    const indexedDB = yield* IDBFactoryImplementation
+    return {
+      open: (config: IDBDatabaseConfig) =>
+        Effect.gen(function*() {
+          // Read to understand possible order of the event cbs
+          // https://w3c.github.io/IndexedDB/#dom-idbfactory-open
+          /**
+           * Notes:
+           *  - `.open` request will hang when attempting to open a new version, while db is being use in other tabs.
+           *    - to work around, the 'versionchange' event can be listened for and one can abort any live txns
+           *  - `.onerror` event will fire for any event error that isn't caught in the lifetime of the db connection.
+           *    - this includes error from deeper events like object store operation requests.
+           */
+          const request = yield* Effect.try({
+            // https://developer.mozilla.org/en-US/docs/Web/API/IDBFactory/open#exceptions
+            try: () => indexedDB.open(config.name, config.version),
+            catch: (error) => {
+              const matched = IDBDatabaseOpenError.fromUnknown(error, config)
+              if (matched) return matched
+              else throw error // defect with original error
+            }
+          })
 
-                // Create ordered effects for each version
-                const upgradeService = createUpgradeService(dbConnection, config, transaction)
-                const migrationEffects = config.onUpgradeNeeded ? config.onUpgradeNeeded(upgradeService) : {}
+          const makeUpgradeEffect = (
+            rawDatabase: IDBDatabase,
+            rawUpgradeTxn: IDBTransaction,
+            migrationStartVersion: number,
+            migrationEndVersion: number
+          ) =>
+            pipe(
+              createUpgradeService(rawDatabase, config, rawUpgradeTxn),
+              Effect.andThen((upgradeService) => {
+                const definedVersionMigrations = config.onUpgradeNeeded ? config.onUpgradeNeeded(upgradeService) : {}
                 const orderedMigrations = []
-                for (let version = startVersion; version <= endVersion; version++) {
-                  if (migrationEffects[version]) orderedMigrations.push(migrationEffects[version])
-                  // if no migration effect declared for this version, auto generate any object stores
-                  // this is an opinion, standard api behavior is to not create any object stores unless explicitly defined
+                for (let version = migrationStartVersion; version <= migrationEndVersion; version++) {
+                  if (definedVersionMigrations[version]) orderedMigrations.push(definedVersionMigrations[version])
                   else if (config.autoObjectStores?.length) {
+                    // if no migration effect declared for this version, auto generate any objectStores in `autoObjectStores`.
+                    // This is an opinion, standard api behavior would not create any object stores unless explicitly defined
                     orderedMigrations.push(upgradeService.autoGenerateObjectStores)
                   }
                 }
-                // run the upgrade effect synchronously. DO NOT run them concurrently
-                // todo: make sure that errors within a upgrade/migration can be rolled back without losing data
-                upgradeFiber = Effect.runFork(Effect.all(orderedMigrations))
-                Effect.runPromiseExit(Fiber.await(upgradeFiber)).then(
-                  (awaitFiberExit) => {
-                    Exit.match(awaitFiberExit, {
-                      onSuccess: (upgradeEffectExit) => {
-                        Exit.match(upgradeEffectExit, {
-                          onSuccess: () => Effect.void, // use the onsuccess handler to `resume` the db connection
-                          onFailure: (cause) => {
-                            resume(Effect.fail(
-                              new IDBDatabaseOpenError({
-                                message: `Error occurred during database upgrade process.\n${cause}`,
-                                // @ts-ignore: todo proper error type propagation for the upgrade service
-                                cause
-                              })
-                            ))
-                          }
-                        })
-                      },
-                      onFailure: (cause) => resume(Effect.die(`Unexpected error during upgrade process. ${cause}`))
-                    })
-                  }
-                )
-              }
-              request.onerror = () => {
-                const matched = IDBDatabaseOpenError.fromUnknown(request.error, config, true)
-                if (matched) {
-                  resume(Effect.fail(matched))
-                } else {
-                  resume(Effect.die(request.error))
-                }
-              }
-              request.onsuccess = () => {
-                if (upgradeFiber) {
-                  resume(pipe(
-                    Fiber.await(upgradeFiber),
-                    Effect.andThen((exit) =>
-                      Exit.match(exit, {
-                        onFailure: (cause) => {
-                          return Effect.fail(
-                            new IDBDatabaseOpenError({
-                              message: `Error occurred during database upgrade process.\n${cause}`,
-                              // @ts-ignore: todo propper error type propagation for the upgrade service
-                              cause
-                            })
-                          )
-                        },
-                        onSuccess: () => Effect.succeed(request.result)
-                      })
-                    )
-                  ))
-                } else {
-                  resume(Effect.succeed(request.result))
-                }
-              }
+                return orderedMigrations as Array<
+                  Effect.Effect<
+                    any,
+                    Effect.Effect.Error<
+                      Effect.Effect.Success<
+                        ReturnType<typeof createUpgradeService>
+                      >["autoGenerateObjectStores"]
+                    >
+                  >
+                >
+              }),
+              // run the upgrade effect synchronously. _DO NOT_ run them concurrently
+              Effect.andThen((migrations) => Effect.all(migrations))
+            )
+          // Register upgrade handler synchronously to avoid races with success/error
+          type UpgradeFailCause = Cause<Effect.Effect.Error<ReturnType<typeof makeUpgradeEffect>>>
+          let failCause: UpgradeFailCause | undefined = undefined
+          request.onupgradeneeded = async (event: IDBVersionChangeEvent) => {
+            if (config.onUpgradeNeeded === undefined && config.autoObjectStores === undefined) return
+            if (event.newVersion === null) return // database is being deleted
+            const rawDatabase = request.result
+            const rawUpgradeTxn = request.transaction!
+            const migrationStartVersion = event.oldVersion + 1
+            const migrationEndVersion = rawDatabase.version
+            const upgradeResult = await Effect.runPromiseExit(
+              makeUpgradeEffect(
+                rawDatabase,
+                rawUpgradeTxn,
+                migrationStartVersion,
+                migrationEndVersion
+              )
+            )
+            const upgradeFailCause = Exit.match(upgradeResult, {
+              onFailure: (cause) => {
+                // Note: idb spec do not _require_ upgrade transactions to auto abort on error,
+                // though in practice all browser implementations seem to do it. Adding it here to be safe.
+                rawUpgradeTxn.abort()
+                return cause
+              },
+              onSuccess: () => undefined
             })
-            return dbConnection
-          })
-      }
-    })
-  )
-  static Live = Layer.provide(this.DefaultNoDependencies, IDBFactoryImplementation.Browser)
+            // note this error type will NOT get passed to the request.onerror event, it will be DOMException
+            if (upgradeFailCause) failCause = upgradeFailCause
+          }
+          const dbConnection = yield* Effect.async<
+            IDBDatabase,
+            | IDBDatabaseOpenError
+            | IDBDatabaseCreateObjectStoreError
+            | IDBObjectStoreCreateIndexError
+          >(
+            (resume, signal) => {
+              const onError = () => {
+                const matched: any = IDBDatabaseOpenError.fromUnknown(request.error, config, true)
+                if (matched && failCause) matched.upgradeCause = failCause
+                if (matched) resume(Effect.fail(matched))
+                else resume(Effect.die(request.error))
+              }
+              const onSuccess = () => resume(Effect.succeed(request.result))
+              request.addEventListener("error", onError)
+              request.addEventListener("success", onSuccess)
+              const cleanup = () => {
+                request.onupgradeneeded = null
+                request.removeEventListener("error", onError)
+                request.removeEventListener("success", onSuccess)
+              }
+              signal.onabort = cleanup
+              return Effect.sync(cleanup)
+            }
+          )
+          return dbConnection
+        })
+    }
+  })
+}) {
+  static Live = Layer.provide(this.Default, IDBFactoryImplementation.Browser)
   static makeTest = (idbFactory: IDBFactory) =>
-    Layer.provide(
-      this.DefaultNoDependencies,
-      IDBFactoryImplementation.makeExternal(idbFactory)
-    )
+    Layer.provide(this.Default, IDBFactoryImplementation.makeExternal(idbFactory))
 }

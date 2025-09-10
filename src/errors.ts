@@ -1,3 +1,4 @@
+import type { Cause } from "effect"
 import { Data, Match } from "effect"
 import type { IDBDatabaseConfig } from "./idbdatabase.js"
 import type { IndexServiceOperations, StoreServiceOperations } from "./idbobjectstore.js"
@@ -52,6 +53,8 @@ export class IDBDatabaseOpenError extends Data.TaggedError("IDBDatabaseOpenError
   readonly config: IDBDatabaseConfig
   /** TypeError if version not a number > zero */
   readonly cause: DomException<typeof IDBRequestValidExceptionNames[number]> | TypeError
+  /** If error occurred during an upgrade, the `Cause of the upgrade failure */
+  readonly upgradeCause?: Cause.Cause<unknown> | undefined
 }> {
   static fromUnknown(error: unknown, config: IDBDatabaseConfig, isFromRequest: boolean = false) {
     const syncText = isFromRequest ? "Async Request" : "Sync Method"
