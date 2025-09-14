@@ -171,7 +171,7 @@ export const makeObjectStoreProxyService = <
       name: storeName,
       keyPath: useStorePropertyEffect("keyPath"),
       autoIncrement: useStorePropertyEffect("autoIncrement"),
-      indexNames: useStorePropertyEffect("indexNames"),
+      indexNames: useStorePropertyEffect("indexNames").pipe(Effect.andThen(Array.from<string>)),
       add: <U = StoreShape>(value: U, key?: IDBValidKey) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
