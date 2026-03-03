@@ -48,6 +48,7 @@ const IDBDatabaseOpValidExceptionNames = {
   ] as const
 }
 
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBFactory/open#exceptions
 export class IDBDatabaseOpenError extends Data.TaggedError("IDBDatabaseOpenError")<{
   readonly message: string
   readonly config: IDBDatabaseConfig
