@@ -4,11 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-patchedDependencies:
-  babel-plugin-annotate-pure-calls@0.4.0:
-    hash: fc3e96d4b985224ea421609113ce0b74baeb5000c4f0019bfc67780795721adf
-    path: patches/babel-plugin-annotate-pure-calls@0.4.0.patch
-
 importers:
 
   .:
@@ -56,8 +51,8 @@ importers:
         specifier: ^8.4.0
         version: 8.35.1(eslint@9.30.0)(typescript@5.8.3)
       babel-plugin-annotate-pure-calls:
-        specifier: ^0.4.0
-        version: 0.4.0(patch_hash=fc3e96d4b985224ea421609113ce0b74baeb5000c4f0019bfc67780795721adf)(@babel/core@7.27.7)
+        specifier: ^0.5.0
+        version: 0.5.0(@babel/core@7.27.7)
       effect:
         specifier: ^3.19.19
         version: 3.19.19
@@ -1081,10 +1076,11 @@ packages:
     resolution: {integrity: sha512-wvUjBtSGN7+7SjNpq/9M2Tg350UZD3q62IFZLbRAR1bSMlCo1ZaeW+BJ+D090e4hIIZLBcTDWe4Mh4jvUDajzQ==}
     engines: {node: '>= 0.4'}
 
-  babel-plugin-annotate-pure-calls@0.4.0:
-    resolution: {integrity: sha512-oi4M/PWUJOU9ZyRGoPTfPMqdyMp06jbJAomd3RcyYuzUtBOddv98BqLm96Lucpi2QFoQHkdGQt0ACvw7VzVEQA==}
+  babel-plugin-annotate-pure-calls@0.5.0:
+    resolution: {integrity: sha512-bWlaZl2qsJKHv9BJgF1g6bQ04wK/7Topq9g59I795W9jpx9lNs9N5LK5NjlEBCDhHncrO0vcoAMuHJR3oWnTeQ==}
+    engines: {node: '>=18'}
     peerDependencies:
-      '@babel/core': ^6.0.0-0 || 7.x
+      '@babel/core': ^7.0.0
 
   balanced-match@1.0.2:
     resolution: {integrity: sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==}
@@ -3415,7 +3411,7 @@ snapshots:
     dependencies:
       possible-typed-array-names: 1.1.0
 
-  babel-plugin-annotate-pure-calls@0.4.0(patch_hash=fc3e96d4b985224ea421609113ce0b74baeb5000c4f0019bfc67780795721adf)(@babel/core@7.27.7):
+  babel-plugin-annotate-pure-calls@0.5.0(@babel/core@7.27.7):
     dependencies:
       '@babel/core': 7.27.7
 
