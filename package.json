@@ -1,13 +1,14 @@
 {
   "name": "effect-indexeddb",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "type": "module",
   "packageManager": "pnpm@10.11.1",
   "license": "MIT",
   "description": "An Effect TS wrapper for IndexedDB.",
   "scripts": {
     "codegen": "build-utils prepare-v2",
-    "build": "rm -rf dist && pnpm build-esm && pnpm build-annotate && pnpm build-cjs && build-utils pack-v2",
+    "clean-build": "rm -rf dist .tsbuildinfo build && pnpm build",
+    "build": "pnpm build-esm && pnpm build-annotate && pnpm build-cjs && build-utils pack-v2",
     "build-esm": "tsc -b tsconfig.build.json",
     "build-cjs": "babel build/esm --plugins @babel/transform-export-namespace-from --plugins @babel/transform-modules-commonjs --out-dir build/cjs --source-maps",
     "build-annotate": "babel build/esm --plugins annotate-pure-calls --out-dir build/esm --source-maps",
@@ -18,7 +19,7 @@
     "coverage": "vitest --coverage"
   },
   "peerDependencies": {
-    "effect": "3.16.10"
+    "effect": "^3.16.10"
   },
   "exports": {
     "main": "./dist/dist/mjs/index.js",
@@ -40,9 +41,9 @@
     "@babel/core": "^7.25.2",
     "@babel/plugin-transform-export-namespace-from": "^7.24.7",
     "@babel/plugin-transform-modules-commonjs": "^7.24.8",
-    "@effect/build-utils": "^0.7.7",
-    "@effect/eslint-plugin": "^0.2.0",
-    "@effect/language-service": "^0.1.0",
+    "@effect/build-utils": "^0.8.9",
+    "@effect/eslint-plugin": "^0.3.2",
+    "@effect/language-service": "*",
     "@effect/vitest": "latest",
     "@eslint/compat": "1.1.1",
     "@eslint/eslintrc": "3.1.0",
@@ -51,7 +52,7 @@
     "@typescript-eslint/eslint-plugin": "^8.4.0",
     "@typescript-eslint/parser": "^8.4.0",
     "babel-plugin-annotate-pure-calls": "^0.4.0",
-    "effect": "^3.16.10",
+    "effect": "^3.19.19",
     "eslint": "^9.10.0",
     "eslint-import-resolver-typescript": "^3.6.3",
     "eslint-plugin-codegen": "^0.28.0",

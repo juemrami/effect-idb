@@ -26,17 +26,17 @@ importers:
         specifier: ^7.24.8
         version: 7.27.1(@babel/core@7.27.7)
       '@effect/build-utils':
-        specifier: ^0.7.7
-        version: 0.7.9
+        specifier: ^0.8.9
+        version: 0.8.9
       '@effect/eslint-plugin':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.3.2
+        version: 0.3.2
       '@effect/language-service':
-        specifier: ^0.1.0
+        specifier: '*'
         version: 0.1.0
       '@effect/vitest':
         specifier: latest
-        version: 0.23.12(effect@3.16.10)(vitest@3.2.4(@types/node@22.15.34))
+        version: 0.27.0(effect@3.19.19)(vitest@3.2.4(@types/node@22.15.34))
       '@eslint/compat':
         specifier: 1.1.1
         version: 1.1.1
@@ -59,8 +59,8 @@ importers:
         specifier: ^0.4.0
         version: 0.4.0(patch_hash=fc3e96d4b985224ea421609113ce0b74baeb5000c4f0019bfc67780795721adf)(@babel/core@7.27.7)
       effect:
-        specifier: ^3.16.10
-        version: 3.16.10
+        specifier: ^3.19.19
+        version: 3.19.19
       eslint:
         specifier: ^9.10.0
         version: 9.30.0
@@ -194,22 +194,22 @@ packages:
   '@dprint/typescript@0.91.8':
     resolution: {integrity: sha512-tuKn4leCPItox1O4uunHcQF0QllDCvPWklnNQIh2PiWWVtRAGltJJnM4Cwj5AciplosD1Hiz7vAY3ew3crLb3A==}
 
-  '@effect/build-utils@0.7.9':
-    resolution: {integrity: sha512-I9tuSvKOnhF2NNsCzHulsUvEwJBQKqiZ1RtbJA+DfxqXZ9J1QSh4txnfnDC2D2bygMYuWqMJWg7TvAWun7cs6w==}
+  '@effect/build-utils@0.8.9':
+    resolution: {integrity: sha512-wzunjr8pyNjghLueo5ePQD7vaM3qeO2H/jF57hNYbQM/rxfipBWYKukoqWyp04qGZ+V86FyOHb8zD5+PMZvH2A==}
     engines: {node: '>=16.17.1'}
     hasBin: true
 
-  '@effect/eslint-plugin@0.2.0':
-    resolution: {integrity: sha512-PC/hEDGctYGYIjZyhM6kbD4FyHxLgoYNoQNjGkCXcFEzi71vQc3PJKe2JnCgzcUDvr/Nc2qgTVU4ONYwjHzQGA==}
+  '@effect/eslint-plugin@0.3.2':
+    resolution: {integrity: sha512-c4Vs9t3r54A4Zpl+wo8+PGzZz3JWYsip41H+UrebRLjQ2Hk/ap63IeCgN/HWcYtxtyhRopjp7gW9nOQ2Snbl+g==}
 
   '@effect/language-service@0.1.0':
     resolution: {integrity: sha512-BnlM8LlaqCAYgdRfxlbR7gXGh/FD1scL1fPgNVJEPoOM08od1jtJz+iKhwfaud8TPnnhZR+TED2h5ynjanLeCQ==}
 
-  '@effect/vitest@0.23.12':
-    resolution: {integrity: sha512-kUR6Npn9gXsO+PlxnZQ9kmd7RzjT1Bl0foyypvCKctvRtG/CmqNgDNNZU9s/GZXvVAtbChjULXe1APyE2smrAw==}
+  '@effect/vitest@0.27.0':
+    resolution: {integrity: sha512-8bM7n9xlMUYw9GqPIVgXFwFm2jf27m/R7psI64PGpwU5+26iwyxp9eAXEsfT5S6lqztYfpQQ1Ubp5o6HfNYzJQ==}
     peerDependencies:
-      effect: ^3.16.12
-      vitest: ^3.0.0
+      effect: ^3.19.0
+      vitest: ^3.2.0
 
   '@emnapi/core@1.4.3':
     resolution: {integrity: sha512-4m62DuCE07lw01soJwPiBGC0nAww0Q+RY70VZ+n49yDIO13yyinhbWCeNnaob0lakDtWQzSdtNWzJeOJt2ma+g==}
@@ -1248,8 +1248,8 @@ packages:
   eastasianwidth@0.2.0:
     resolution: {integrity: sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA==}
 
-  effect@3.16.10:
-    resolution: {integrity: sha512-F0hDCOLax7i3SOy5wQnJZTzKP9aGg8OQNUJ2s8YoL5fVcCgRCgE+Ky+Hfz5qC7LgVVOWDDbRpCh5MPB20wRI8Q==}
+  effect@3.19.19:
+    resolution: {integrity: sha512-Yc8U/SVXo2dHnaP7zNBlAo83h/nzSJpi7vph6Hzyl4ulgMBIgPmz3UzOjb9sBgpFE00gC0iETR244sfXDNLHRg==}
 
   electron-to-chromium@1.5.178:
     resolution: {integrity: sha512-wObbz/ar3Bc6e4X5vf0iO8xTN8YAjN/tgiAOJLr7yjYFtP9wAjq8Mb5h0yn6kResir+VYx2DXBj9NNobs0ETSA==}
@@ -2066,6 +2066,9 @@ packages:
     resolution: {integrity: sha512-uB80kBFb/tfd68bVleG9T5GGsGPjJrLAUpR5PZIrhBnIaRTQRjqdJSsIKkOP6OAIFbj7GOrcudc5pNjZ+geV2g==}
     engines: {node: '>=6'}
 
+  pkg-entry-points@1.1.1:
+    resolution: {integrity: sha512-BhZa7iaPmB4b3vKIACoppyUoYn8/sFs17VJJtzrzPZvEnN2nqrgg911tdL65lA2m1ml6UI3iPeYbZQ4VXpn1mA==}
+
   possible-typed-array-names@1.1.0:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
     engines: {node: '>= 0.4'}
@@ -2663,9 +2666,12 @@ snapshots:
 
   '@dprint/typescript@0.91.8': {}
 
-  '@effect/build-utils@0.7.9': {}
+  '@effect/build-utils@0.8.9':
+    dependencies:
+      micromatch: 4.0.8
+      pkg-entry-points: 1.1.1
 
-  '@effect/eslint-plugin@0.2.0':
+  '@effect/eslint-plugin@0.3.2':
     dependencies:
       '@dprint/formatter': 0.4.1
       '@dprint/typescript': 0.91.8
@@ -2673,9 +2679,9 @@ snapshots:
 
   '@effect/language-service@0.1.0': {}
 
-  '@effect/vitest@0.23.12(effect@3.16.10)(vitest@3.2.4(@types/node@22.15.34))':
+  '@effect/vitest@0.27.0(effect@3.19.19)(vitest@3.2.4(@types/node@22.15.34))':
     dependencies:
-      effect: 3.16.10
+      effect: 3.19.19
       vitest: 3.2.4(@types/node@22.15.34)
 
   '@emnapi/core@1.4.3':
@@ -3573,7 +3579,7 @@ snapshots:
 
   eastasianwidth@0.2.0: {}
 
-  effect@3.16.10:
+  effect@3.19.19:
     dependencies:
       '@standard-schema/spec': 1.0.0
       fast-check: 3.23.2
@@ -4563,6 +4569,8 @@ snapshots:
   picomatch@4.0.2: {}
 
   pify@4.0.1: {}
+
+  pkg-entry-points@1.1.1: {}
 
   possible-typed-array-names@1.1.0: {}
 
