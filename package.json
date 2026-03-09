@@ -5,13 +5,29 @@
   "packageManager": "pnpm@10.11.1",
   "license": "MIT",
   "description": "An Effect TS wrapper for IndexedDB.",
+  "sideEffects": [],
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": "./dist/index.js",
+    "./*": "./dist/*.js",
+    "./internal/*": null,
+    "./*/index": null
+  },
+  "files": [
+    "src/**/*.ts",
+    "dist/**/*.js",
+    "dist/**/*.js.map",
+    "dist/**/*.d.ts",
+    "dist/**/*.d.ts.map",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "codegen": "build-utils prepare-v2",
-    "clean-build": "rm -rf dist .tsbuildinfo build && pnpm build",
-    "build": "pnpm build-esm && pnpm build-annotate && pnpm build-cjs && build-utils pack-v2",
-    "build-esm": "tsc -b tsconfig.build.json",
-    "build-cjs": "babel build/esm --plugins @babel/transform-export-namespace-from --plugins @babel/transform-modules-commonjs --out-dir build/cjs --source-maps",
-    "build-annotate": "babel build/esm --plugins annotate-pure-calls --out-dir build/esm --source-maps",
+    "clean": "rm -rf dist .tsbuildinfo",
+    "build": "tsc -b tsconfig.build.json && pnpm babel",
+    "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
+    "clean-build": "pnpm clean && pnpm build",
     "check": "tsc -b tsconfig.json",
     "lint": "eslint \"**/{src,test,examples,scripts,dtslint}/**/*.{ts,mjs}\"",
     "lint-fix": "pnpm lint --fix",
@@ -21,27 +37,16 @@
   "peerDependencies": {
     "effect": "4.0.0-beta.29"
   },
-  "exports": {
-    "main": "./dist/dist/mjs/index.js",
-    "module": "./dist/dist/esm/index.js",
-    "types": "./dist/dist/dts/index.d.ts"
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/juemrami/effect-idb"
   },
-  "files": [
-    "dist"
-  ],
   "publishConfig": {
-    "directory": "dist"
+    "access": "public"
   },
   "devDependencies": {
     "@babel/cli": "^7.24.8",
     "@babel/core": "^7.25.2",
-    "@babel/plugin-transform-export-namespace-from": "^7.24.7",
-    "@babel/plugin-transform-modules-commonjs": "^7.24.8",
-    "@effect/build-utils": "^0.8.9",
     "@effect/eslint-plugin": "^0.3.2",
     "@effect/language-service": "*",
     "@effect/vitest": "4.0.0-beta.29",
@@ -63,18 +68,6 @@
     "tsx": "^4.17.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
-  },
-  "effect": {
-    "generateExports": {
-      "include": [
-        "**/*.ts"
-      ]
-    },
-    "generateIndex": {
-      "include": [
-        "**/*.ts"
-      ]
-    }
   },
   "pnpm": {
     "onlyBuiltDependencies": [
