@@ -32,6 +32,7 @@ const useRawIndexRequest = <T, const Op extends IndexServiceOperations>(
       request.onerror = (event) => {
         const error = (event.target as IDBRequest<T>).error
         const matched = IDBIndexOperationErrorMap.fromUnknown(error, operation, true)
+        if (matched) event.stopPropagation(); // prevent unhandled error events in parent requests
         resume(matched === null ? Effect.die(error) : Effect.fail(matched)) // defect on unknown
       }
     })
@@ -112,6 +113,7 @@ const useRawStoreRequest = <T, const Op extends StoreServiceOperations>(
       request.onerror = (event) => {
         const error = (event.target as IDBRequest<T>).error
         const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, operation, true)
+        if (matched) event.stopPropagation();
         resume(matched === null ? Effect.die(error) : Effect.fail(matched)) // defect on unknown
       }
     })
