@@ -282,7 +282,7 @@ const makeServiceEffect = Effect.gen(function* () {
 
 class UserObjectStore extends Context.Tagged("UserObjectStore")<
 UserObjectStore,
-Effect.Effect.Success<typeof makeServiceEffect>,
+Effect.Success<typeof makeServiceEffect>,
 >(){
   static readonly Config: IDBObjectStoreConfig = {
   name: "users",

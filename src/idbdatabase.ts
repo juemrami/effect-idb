@@ -1,10 +1,10 @@
 import type { Cause } from "effect/Cause"
-import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import { pipe } from "effect/Function"
 import * as Layer from "effect/Layer"
 import * as Ref from "effect/Ref"
+import * as ServiceMap from "effect/ServiceMap"
 import type { DomException, IDBObjectStoreCreateIndexError } from "./errors.js"
 import {
   IDBDatabaseCreateObjectStoreError,
@@ -23,7 +23,7 @@ import { getRawObjectStoreFromRawTransactionEffect, TransactionRegistryService }
 const CONTEXT_PREFIX = "/src/idbdatabase:"
 
 export class IDBFactoryImplementation
-  extends Context.Tag(`${CONTEXT_PREFIX}IDBFactory`)<IDBFactoryImplementation, IDBFactory>()
+  extends ServiceMap.Service<IDBFactoryImplementation, IDBFactory>()(`${CONTEXT_PREFIX}IDBFactory`)
 {
   static readonly Browser = Layer.sync(IDBFactoryImplementation, () => window.indexedDB)
   static readonly makeExternal = (indexedDB: IDBFactory) => Layer.sync(IDBFactoryImplementation, () => indexedDB)
@@ -44,7 +44,7 @@ const createBaseService = Effect.fn(function*(db: IDBDatabase) {
     __transactionHistoryRef: transactionHistory
   }
 })
-type DBServiceShape = Effect.Effect.Success<ReturnType<typeof createBaseService>>
+type DBServiceShape = Effect.Success<ReturnType<typeof createBaseService>>
 /** Creates a version of IDBDatabaseService with additional methods that can only be used during the IDB's onupgradeneeded handler
  * Object stores accessed via this service's `.objectStore` are similarly extended versions of IDBObjectStoreService.
  */
@@ -105,13 +105,14 @@ const createUpgradeService = Effect.fn(
       }
     }
     const getObjectStoreUpgradeService = Effect.fn(function*(storeName) {
-      const storeUpgradeService = TransactionRegistryService.pipe(
+      const storeUpgradeService = pipe(
+        Effect.service(TransactionRegistryService),
         Effect.andThen((tx) => tx.useObjectStore(storeName)),
         Effect.andThen(
           (rawStore) =>
             pipe(
               makeObjectStoreProxyService(storeName),
-              Effect.andThen((baseStoreService) => ({
+              Effect.map((baseStoreService) => ({
                 ...baseStoreService,
                 createIndex: (index: IDBObjectStoreIndexParams) =>
                   Effect.try({
@@ -278,14 +279,14 @@ export type IDBDatabaseConfig = {
    * This is in contrast to the standard IDB behavior, which does not create any object stores
    * unless explicitly defined during the upgrade process. */
   onUpgradeNeeded?: (
-    upgradeService: Effect.Effect.Success<ReturnType<typeof createUpgradeService>>
+    upgradeService: Effect.Success<ReturnType<typeof createUpgradeService>>
   ) => Record<number, Effect.Effect<any, any, never>>
 }
 export class IDBDatabaseService
-  extends Context.Tag(`${CONTEXT_PREFIX}DatabaseService`)<IDBDatabaseService, DBServiceShape>()
+  extends ServiceMap.Service<IDBDatabaseService, DBServiceShape>()(`${CONTEXT_PREFIX}DatabaseService`)
 {
   static make = (config: IDBDatabaseConfig) =>
-    Layer.scoped(
+    Layer.effect(
       IDBDatabaseService,
       Effect.gen(function*() {
         const dbFactory = yield* IDBFactoryService
@@ -315,8 +316,8 @@ export class IDBDatabaseService
       IDBFactoryService.makeTest(indexedDB)
     )
 }
-export class IDBFactoryService extends Effect.Service<IDBFactoryService>()(`${CONTEXT_PREFIX}FactoryService`, {
-  effect: Effect.gen(function*() {
+export class IDBFactoryService extends ServiceMap.Service<IDBFactoryService>()(`${CONTEXT_PREFIX}FactoryService`, {
+  make: Effect.gen(function*() {
     const indexedDB = yield* IDBFactoryImplementation
     return {
       open: (config: IDBDatabaseConfig) =>
@@ -348,7 +349,7 @@ export class IDBFactoryService extends Effect.Service<IDBFactoryService>()(`${CO
           ) =>
             pipe(
               createUpgradeService(rawDatabase, config, rawUpgradeTxn),
-              Effect.andThen((upgradeService) => {
+              Effect.map((upgradeService) => {
                 const definedVersionMigrations = config.onUpgradeNeeded ? config.onUpgradeNeeded(upgradeService) : {}
                 const orderedMigrations = []
                 for (let version = migrationStartVersion; version <= migrationEndVersion; version++) {
@@ -362,8 +363,8 @@ export class IDBFactoryService extends Effect.Service<IDBFactoryService>()(`${CO
                 return orderedMigrations as Array<
                   Effect.Effect<
                     any,
-                    Effect.Effect.Error<
-                      Effect.Effect.Success<
+                    Effect.Error<
+                      Effect.Success<
                         ReturnType<typeof createUpgradeService>
                       >["autoGenerateObjectStores"]
                     >
@@ -374,7 +375,7 @@ export class IDBFactoryService extends Effect.Service<IDBFactoryService>()(`${CO
               Effect.andThen((migrations) => Effect.all(migrations))
             )
           // Register upgrade handler synchronously to avoid races with success/error
-          type UpgradeFailCause = Cause<Effect.Effect.Error<ReturnType<typeof makeUpgradeEffect>>>
+          type UpgradeFailCause = Cause<Effect.Error<ReturnType<typeof makeUpgradeEffect>>>
           let failCause: UpgradeFailCause | undefined = undefined
           request.onupgradeneeded = async (event: IDBVersionChangeEvent) => {
             if (config.onUpgradeNeeded === undefined && config.autoObjectStores === undefined) return
@@ -403,36 +404,33 @@ export class IDBFactoryService extends Effect.Service<IDBFactoryService>()(`${CO
             // note this error type will NOT get passed to the request.onerror event, it will be DOMException
             if (upgradeFailCause) failCause = upgradeFailCause
           }
-          const dbConnection = yield* Effect.async<
-            IDBDatabase,
-            | IDBDatabaseOpenError
-            | IDBDatabaseCreateObjectStoreError
-            | IDBObjectStoreCreateIndexError
-          >(
-            (resume, signal) => {
-              const onError = () => {
-                const matched: any = IDBDatabaseOpenError.fromUnknown(request.error, config, true)
-                if (matched && failCause) matched.upgradeCause = failCause
-                if (matched) resume(Effect.fail(matched))
-                else resume(Effect.die(request.error))
-              }
-              const onSuccess = () => resume(Effect.succeed(request.result))
-              request.addEventListener("error", onError)
-              request.addEventListener("success", onSuccess)
-              const cleanup = () => {
-                request.onupgradeneeded = null
-                request.removeEventListener("error", onError)
-                request.removeEventListener("success", onSuccess)
-              }
-              signal.onabort = cleanup
-              return Effect.sync(cleanup)
+          const dbConnection = yield* Effect.tryPromise({
+            try: (signal) =>
+              new Promise<IDBDatabase>((resolve, reject) => {
+                const onError = () => reject(request.error)
+                const onSuccess = () => resolve(request.result)
+                request.addEventListener("error", onError)
+                request.addEventListener("success", onSuccess)
+                const cleanup = () => {
+                  request.onupgradeneeded = null
+                  request.removeEventListener("error", onError)
+                  request.removeEventListener("success", onSuccess)
+                }
+                signal.onabort = cleanup
+              }),
+            catch: (error) => {
+              const matched = IDBDatabaseOpenError.fromUnknown(error, config, true)
+              if (matched && failCause) (matched as any).upgradeCause = failCause
+              if (matched) return matched
+              else throw error
             }
-          )
+          })
           return dbConnection
         })
     }
   })
 }) {
+  private static Default = Layer.effect(IDBFactoryService, this.make)
   static Live = Layer.provide(this.Default, IDBFactoryImplementation.Browser)
   static makeTest = (idbFactory: IDBFactory) =>
     Layer.provide(this.Default, IDBFactoryImplementation.makeExternal(idbFactory))

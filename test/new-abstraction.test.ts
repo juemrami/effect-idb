@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Ref } from "effect"
+import { Effect, Layer, Ref, ServiceMap } from "effect"
 import { describe } from "node:test"
 import { expect, it } from "vitest"
 import { IDBDatabaseService } from "../src/idbdatabase.js"
@@ -49,7 +49,7 @@ class ContactObjectStore extends TaggedIDBObjectStoreService<
   }
 ) {}
 
-// Tagged notes store using the base IDBObjectStoreService and Context.Tag
+// Tagged notes store using the base IDBObjectStoreService and ServiceMap.Service
 type Note = {
   id?: IDBValidKey
   content: string
@@ -64,10 +64,10 @@ const makeCustomNotesStoreEffect = Effect.gen(function*() {
       baseService.add<Note>({ ...note, createdAt: note.createdAt, by: friendID })
   }
 })
-class NoteObjectStore extends Context.Tag("NoteObjectStore")<
+class NoteObjectStore extends ServiceMap.Service<
   NoteObjectStore,
-  Effect.Effect.Success<typeof makeCustomNotesStoreEffect>
->() {
+  Effect.Success<typeof makeCustomNotesStoreEffect>
+>()("NoteObjectStore") {
   static readonly Config: IDBObjectStoreConfig = {
     name: "notes",
     params: {

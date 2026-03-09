@@ -1,4 +1,4 @@
-import { Cause, Console, Effect, Exit, Layer, pipe } from "effect"
+import { Cause, Console, Effect, Exit, Layer, pipe, ServiceMap } from "effect"
 import { indexedDB } from "fake-indexeddb"
 import { assert, describe, expect, it } from "vitest"
 import { IDBDatabaseOpenError, IDBDatabaseTransactionOpenError } from "../src/errors.js"
@@ -24,15 +24,18 @@ type Contact = {
   name: string
   email: string
 }
-class ContactObjectStore extends Effect.Service<ContactObjectStore>()(
+class ContactObjectStore extends ServiceMap.Service<ContactObjectStore>()(
   "ContactObjectStore",
   {
-    dependencies: [IDBObjectStoreService.make(ContactObjectStoreConfig.name)],
-    effect: Effect.gen(function*() {
+    make: Effect.gen(function*() {
       return yield* IDBObjectStoreService
     })
   }
 ) {
+  static Default = Layer.provide(
+    Layer.effect(ContactObjectStore, this.make),
+    IDBObjectStoreService.make(ContactObjectStoreConfig.name)
+  )
   static Config = ContactObjectStoreConfig
 }
 
@@ -47,15 +50,18 @@ const NotesObjectStoreConfig: IDBObjectStoreConfig = {
     { name: "createdAt", keyPath: "createdAt" }
   ]
 }
-class NotesObjectStore extends Effect.Service<NotesObjectStore>()(
+class NotesObjectStore extends ServiceMap.Service<NotesObjectStore>()(
   "NotesObjectStore",
   {
-    dependencies: [IDBObjectStoreService.make(NotesObjectStoreConfig.name)],
-    effect: Effect.gen(function*() {
+    make: Effect.gen(function*() {
       return yield* IDBObjectStoreService
     })
   }
 ) {
+  static Default = Layer.provide(
+    Layer.effect(NotesObjectStore, this.make),
+    IDBObjectStoreService.make(NotesObjectStoreConfig.name)
+  )
   static Config = NotesObjectStoreConfig
 }
 
@@ -297,19 +303,22 @@ describe("Database Upgrade Service", () => {
       pipe(
         Console.log("Running upgrade test..."), // this wont be reached, will fail on dbLayer construction
         Effect.provide(dbWithUpgradeFailureLayer)
-        // Effect.catchAllDefect((_) => Effect.fail(UnexpectedUpgradeError))
+        // Effect.catchDefect((_) => Effect.fail(UnexpectedUpgradeError))
       )
     )
     Exit.match(upgradeFailureExit, {
       onFailure: (cause) => {
-        expect(Cause.isFailType(cause)).toBe(true)
-        type E = (typeof cause) extends Cause.Cause<infer E> ? E : never
-        expect((cause as Cause.Fail<E>).error!).toBeInstanceOf(IDBDatabaseOpenError)
-        expect((cause as Cause.Fail<IDBDatabaseOpenError>).error.cause.name).toBe("AbortError")
-        const upgradeCause = (cause as Cause.Fail<IDBDatabaseOpenError>).error.upgradeCause
+        expect(cause.reasons.length).toBe(1)
+        const reason = cause.reasons[0]
+        expect(Cause.isFailReason(reason)).toBe(true)
+        const error = (reason as Cause.Fail<IDBDatabaseOpenError>).error
+        expect(error).toBeInstanceOf(IDBDatabaseOpenError)
+        expect(error.cause.name).toBe("AbortError")
+        const upgradeCause = error.upgradeCause
         expect(upgradeCause).toBeDefined()
-        expect(Cause.isFailType(upgradeCause!)).toBe(true)
-        expect((upgradeCause as Cause.Fail<unknown>).error).toBeInstanceOf(UnexpectedUpgradeError.constructor)
+        const upgradeCauseReason = upgradeCause?.reasons[0] as Cause.Fail<unknown>
+        expect(Cause.isFailReason(upgradeCauseReason)).toBe(true)
+        expect((upgradeCauseReason as Cause.Fail<unknown>).error).toBeInstanceOf(UnexpectedUpgradeError.constructor)
       },
       onSuccess: (_) => {
         assert(false, "Expected upgrade to fail, but it succeeded")
@@ -379,18 +388,22 @@ describe("Database Upgrade Service", () => {
       pipe(
         Console.log("Running upgrade test..."), // this wont be reached, will fail on dbLayer construction
         Effect.provide(dbWithUpgradeFailureLayer),
-        Effect.catchAllDefect((_) => Effect.fail(UnexpectedUpgradeError))
+        Effect.catchDefect((_) => Effect.fail(UnexpectedUpgradeError))
       )
     )
     Exit.match(upgradeFailureExit, {
-      onFailure: (cause: any) => {
-        expect(Cause.isFailType(cause)).toBe(true)
-        expect(cause.error).toBeInstanceOf(IDBDatabaseOpenError)
-        expect((cause.error as IDBDatabaseOpenError).cause.name).toBe("AbortError")
-        const upgradeCause = (cause.error as IDBDatabaseOpenError).upgradeCause
+      onFailure: (cause) => {
+        expect(cause.reasons.length).toBe(1)
+        const reason = cause.reasons[0]
+        expect(Cause.isFailReason(reason)).toBe(true)
+        const error = (reason as Cause.Fail<IDBDatabaseOpenError>).error
+        expect(error).toBeInstanceOf(IDBDatabaseOpenError)
+        expect(error.cause.name).toBe("AbortError")
+        const upgradeCause = error.upgradeCause
         expect(upgradeCause).toBeDefined()
-        expect(Cause.isFailType(upgradeCause!)).toBe(true)
-        expect((upgradeCause as Cause.Fail<unknown>).error).toBeInstanceOf(UnexpectedUpgradeError.constructor)
+        const upgradeCauseReason = upgradeCause?.reasons[0] as Cause.Fail<unknown>
+        expect(Cause.isFailReason(upgradeCauseReason)).toBe(true)
+        expect((upgradeCauseReason as Cause.Fail<unknown>).error).toBeInstanceOf(UnexpectedUpgradeError.constructor)
       },
       onSuccess: (_) => {
         assert(false, "Expected upgrade process to fail, but succeeded")

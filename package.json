@@ -1,6 +1,6 @@
 {
   "name": "effect-indexeddb",
-  "version": "0.0.5",
+  "version": "1.0.0-beta.1",
   "type": "module",
   "packageManager": "pnpm@10.11.1",
   "license": "MIT",
@@ -44,15 +44,15 @@
     "@effect/build-utils": "^0.8.9",
     "@effect/eslint-plugin": "^0.3.2",
     "@effect/language-service": "*",
-    "@effect/vitest": "latest",
+    "@effect/vitest": "4.0.0-beta.29",
     "@eslint/compat": "1.1.1",
     "@eslint/eslintrc": "3.1.0",
     "@eslint/js": "9.10.0",
-    "@types/node": "^22.5.2",
-    "@typescript-eslint/eslint-plugin": "^8.4.0",
-    "@typescript-eslint/parser": "^8.4.0",
+    "@types/node": "^25.3.5",
+    "@typescript-eslint/eslint-plugin": "^8.56.1",
+    "@typescript-eslint/parser": "^8.56.1",
     "babel-plugin-annotate-pure-calls": "^0.5.0",
-    "effect": "^3.19.19",
+    "effect": "4.0.0-beta.29",
     "eslint": "^9.10.0",
     "eslint-import-resolver-typescript": "^3.6.3",
     "eslint-plugin-codegen": "^0.28.0",
@@ -61,8 +61,8 @@
     "eslint-plugin-sort-destructure-keys": "^2.0.0",
     "fake-indexeddb": "^6.2.5",
     "tsx": "^4.17.0",
-    "typescript": "^5.6.2",
-    "vitest": "^3.2.4"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   },
   "effect": {
     "generateExports": {

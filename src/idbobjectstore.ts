@@ -1,6 +1,6 @@
-import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as ServiceMap from "effect/ServiceMap"
 
 import { IDBIndexOperationErrorMap, IDBObjectStoreOperationErrorMap } from "./errors.js"
 import { IDBTransactionService, TransactionRegistryService } from "./idbtransaction.js"
@@ -22,18 +22,26 @@ const useRawIndexRequest = <T, const Op extends IndexServiceOperations>(
       catch: (err) => {
         const matched = IDBIndexOperationErrorMap.fromUnknown(err, operation)
         if (matched === null) throw err // cause defect on unknown errors
-        else return matched
+        else return matched as IDBIndexOperationErrorMap<false>[Op]
       }
     })
-    return yield* Effect.async<T, IDBIndexOperationErrorMap<true>[Op]>((resume) => {
-      request.onsuccess = (event) => {
-        resume(Effect.succeed((event.target as IDBRequest<T>).result))
-      }
-      request.onerror = (event) => {
-        const error = (event.target as IDBRequest<T>).error
-        const matched = IDBIndexOperationErrorMap.fromUnknown(error, operation, true)
-        if (matched) event.stopPropagation(); // prevent unhandled error events in parent requests
-        resume(matched === null ? Effect.die(error) : Effect.fail(matched)) // defect on unknown
+    let matchedAsyncError: IDBIndexOperationErrorMap<true>[Op] | null = null
+    return yield* Effect.tryPromise({
+      try: (_) =>
+        new Promise<T>((resolve, reject) => {
+          request.onsuccess = (event) => {
+            resolve((event.target as IDBRequest<T>).result)
+          }
+          request.onerror = (event) => {
+            const error = (event.target as IDBRequest<T>).error
+            matchedAsyncError = IDBIndexOperationErrorMap.fromUnknown(error, operation, true)
+            if (matchedAsyncError) event.stopPropagation()
+            reject(error)
+          }
+        }),
+      catch: (error) => {
+        if (matchedAsyncError === null) throw error // defect on unknown
+        else return matchedAsyncError
       }
     })
   })
@@ -81,9 +89,9 @@ const makeIndexServiceEffect = <U = unknown>(rawStore: IDBObjectStore, indexName
       // todo: openCursor, openKeyCursor
     }
   })
-// class IDBIndexService extends Context.Tag(`${CONTEXT_PREFIX}IDBIndexService`)<
+// class IDBIndexService extends ServiceMap.Service(`${CONTEXT_PREFIX}IDBIndexService`)<
 //   IDBIndexService,
-//   Effect.Effect.Success<ReturnType<typeof makeIndexServiceEffect>>
+//   Effect.Success<ReturnType<typeof makeIndexServiceEffect>>
 // >() {
 //   static readonly make = makeIndexServiceEffect
 // }
@@ -106,15 +114,23 @@ const useRawStoreRequest = <T, const Op extends StoreServiceOperations>(
         return matched
       }
     })
-    return yield* Effect.async<T, IDBObjectStoreOperationErrorMap<true>[Op]>((resume) => {
-      request.onsuccess = (event) => {
-        resume(Effect.succeed((event.target as IDBRequest<T>).result))
-      }
-      request.onerror = (event) => {
-        const error = (event.target as IDBRequest<T>).error
-        const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, operation, true)
-        if (matched) event.stopPropagation();
-        resume(matched === null ? Effect.die(error) : Effect.fail(matched)) // defect on unknown
+    let matchedAsyncError: IDBObjectStoreOperationErrorMap<true>[Op] | null = null
+    return yield* Effect.tryPromise({
+      try: (_) =>
+        new Promise<T>((resolve, reject) => {
+          request.onsuccess = (event) => {
+            resolve((event.target as IDBRequest<T>).result)
+          }
+          request.onerror = (event) => {
+            const error = (event.target as IDBRequest<T>).error
+            matchedAsyncError = IDBObjectStoreOperationErrorMap.fromUnknown(error, operation, true)
+            if (matchedAsyncError) event.stopPropagation()
+            reject(error)
+          }
+        }),
+      catch: (error) => {
+        if (matchedAsyncError === null) throw error // defect on unknown
+        else return matchedAsyncError
       }
     })
   })
@@ -173,7 +189,7 @@ export const makeObjectStoreProxyService = <
       name: storeName,
       keyPath: useStorePropertyEffect("keyPath"),
       autoIncrement: useStorePropertyEffect("autoIncrement"),
-      indexNames: useStorePropertyEffect("indexNames").pipe(Effect.andThen(Array.from<string>)),
+      indexNames: useStorePropertyEffect("indexNames").pipe(Effect.map(Array.from<string>)),
       add: <U = StoreShape>(value: U, key?: IDBValidKey) =>
         Effect.gen(function*() {
           const store = yield* registry.useObjectStore(storeName)
@@ -224,18 +240,12 @@ const makeStoreServiceEffect = <
     return objectStoreProxy
   })
 }
-export class IDBObjectStoreService extends Context.Tag(`${CONTEXT_PREFIX}ObjectStoreService`)<
+export class IDBObjectStoreService extends ServiceMap.Service<
   IDBObjectStoreService,
-  Effect.Effect.Success<ReturnType<typeof makeStoreServiceEffect>>
->() {
+  Effect.Success<ReturnType<typeof makeStoreServiceEffect>>
+>()(`${CONTEXT_PREFIX}ObjectStoreService`) {
   static make = (storeName: string) => Layer.effect(IDBObjectStoreService, makeStoreServiceEffect(storeName))
 }
-
-type MakeFromArgs<Args> = Args extends
-  { readonly makeServiceEffect: (baseService: any) => Effect.Effect<infer _A, infer _E, infer _R> } ? {
-    readonly effect: Effect.Effect<_A, _E, _R | IDBTransactionService>
-  } :
-  never
 
 /**
  * Creates a tagged IDB object store service layer with self-contained configuration and extensible methods.
@@ -267,26 +277,33 @@ export const TaggedIDBObjectStoreService: <
   Self,
   DataShape = unknown
 >() => <
-  const Key extends string,
+  const Identifier extends string,
   const Config extends IDBObjectStoreConfig,
-  const Args extends {
-    readonly makeServiceEffect: (
-      baseService: Effect.Effect.Success<ReturnType<typeof makeObjectStoreProxyService<Config, DataShape>>>
-    ) => Effect.Effect<Effect.Service.AllowedType<Key, MakeFromArgs<Args>>, any, any>
-  },
-  const Make extends MakeFromArgs<Args>,
+  const MakeFromBase extends (
+    baseService: Effect.Success<ReturnType<typeof makeObjectStoreProxyService<Config, DataShape>>>
+  ) => Effect.Effect<any, any, any>,
+  const MakeShape extends Effect.Success<ReturnType<MakeFromBase>>,
+  const MakeErrors extends Effect.Error<ReturnType<MakeFromBase>>,
+  const MakeRequirements extends Effect.Services<ReturnType<MakeFromBase>>,
+  const DefaultLayer extends Layer.Layer<
+    Self,
+    MakeErrors,
+    MakeRequirements | IDBTransactionService
+  >,
   const LayerWithTransaction extends Layer.Layer<
     Self,
-    Effect.Service.MakeError<Make>,
-    Exclude<Effect.Service.MakeContext<Make>, IDBTransactionService>
+    MakeErrors,
+    Exclude<MakeRequirements, IDBTransactionService>
   >
 >(
-  key: Key,
-  options: Args & {
+  key: Identifier,
+  options: {
     readonly storeConfig: Config
+    readonly makeServiceEffect: MakeFromBase
   }
-) => Effect.Service.Class<Self, Key, Make> & {
+) => ServiceMap.ServiceClass<Self, Identifier, MakeShape> & {
   readonly Config: Config
+  readonly Default: DefaultLayer
   readonly WithReadWrite: LayerWithTransaction
   readonly WithReadOnly: LayerWithTransaction
   readonly WithFreshReadWrite: LayerWithTransaction
@@ -298,40 +315,42 @@ export const TaggedIDBObjectStoreService: <
     return yield* options.makeServiceEffect(baseService)
   })
 
-  // Create the tag class properly
-  // @ts-ignore Effect.Service **is** callable
-  let TagClass = Effect.Service<Self>()(key, {
-    effect: serviceEffect
-  }) as Effect.Service.Class<Self, typeof key, MakeFromArgs<typeof options>>
+  let TagClass = ServiceMap.Service<Self>()(key, { make: serviceEffect })
 
   // Layer caches. Prevents multiple calls to layer make effect.
-  let rwLayerCache, roLayerCache
+  let defaultLayerCache, rwLayerCache, roLayerCache
   TagClass = Object.defineProperties(TagClass, {
     Config: {
       get(this: any) {
         return options.storeConfig
       }
     },
-    WithReadWrite: {
+    Default: {
       get(this: typeof TagClass) {
-        rwLayerCache ??= Layer.provide(this.Default as any, IDBTransactionService.ReadWrite)
+        defaultLayerCache ??= Layer.effect(this, this.make)
+        return defaultLayerCache
+      }
+    },
+    WithReadWrite: {
+      get(this: any) {
+        rwLayerCache ??= Layer.provide(this.Default, IDBTransactionService.ReadWrite)
         return rwLayerCache
       }
     },
     WithFreshReadWrite: {
-      get(this: typeof TagClass) {
-        return Layer.fresh(Layer.provide(this.Default as any, IDBTransactionService.ReadWrite))
+      get(this: any) {
+        return Layer.fresh(Layer.provide(this.Default, IDBTransactionService.ReadWrite))
       }
     },
     WithReadOnly: {
-      get(this: typeof TagClass) {
-        roLayerCache ??= Layer.provide(this.Default as any, IDBTransactionService.ReadOnly)
+      get(this: any) {
+        roLayerCache ??= Layer.provide(this.Default, IDBTransactionService.ReadOnly)
         return roLayerCache
       }
     },
     WithFreshReadOnly: {
-      get(this: typeof TagClass) {
-        return Layer.fresh(Layer.provide(this.Default as any, IDBTransactionService.ReadOnly))
+      get(this: any) {
+        return Layer.fresh(Layer.provide(this.Default, IDBTransactionService.ReadOnly))
       }
     }
   })

@@ -70,12 +70,10 @@ describe("Effect IndexedDB - Runtime and Database Connection", () => {
 
       // Both runtimes should work independently
 
-      const program1 = Effect.provide(program, runtime1)
-      const program2 = Effect.provide(program, runtime2)
-
-      const [result1, result2] = await Effect.runPromise(
-        Effect.all([program1, program2], { concurrency: "unbounded" })
-      )
+      const [result1, result2] = await Promise.all([
+        runtime1.runPromise(program),
+        runtime2.runPromise(program)
+      ])
 
       expect(Array.isArray(result1)).toBe(true)
       expect(Array.isArray(result2)).toBe(true)
@@ -114,12 +112,10 @@ describe("Effect IndexedDB - Runtime and Database Connection", () => {
         return { dbRef, storeNames }
       })
 
-      const task1 = Effect.provide(program1, runtime1)
-      const task2 = Effect.provide(program2, runtime2)
-
-      const [result1, result2] = await Effect.runPromise(
-        Effect.all([task1, task2], { concurrency: "unbounded" })
-      )
+      const [result1, result2] = await Promise.all([
+        runtime1.runPromise(program1),
+        runtime2.runPromise(program2)
+      ])
 
       // Verify both connections work
       expect(Array.isArray(result1.storeNames)).toBe(true)
@@ -157,12 +153,11 @@ describe("Effect IndexedDB - Runtime and Database Connection", () => {
         return storeNames
       })
 
-      const [result1, result2] = await Effect.runPromise(
-        Effect.all([
-          Effect.provide(initialProgram, runtime1),
-          Effect.provide(initialProgram, runtime2)
-        ], { concurrency: "unbounded" })
-      )
+      runtime1.runPromise(initialProgram)
+      const [result1, result2] = await Promise.all([
+        runtime1.runPromise(initialProgram),
+        runtime2.runPromise(initialProgram)
+      ])
 
       expect(Array.isArray(result1)).toBe(true)
       expect(Array.isArray(result2)).toBe(true)
@@ -177,9 +172,7 @@ describe("Effect IndexedDB - Runtime and Database Connection", () => {
         return storeNames
       })
 
-      const resultAfterClose = await Effect.runPromise(
-        Effect.provide(afterCloseProgram, runtime2)
-      )
+      const resultAfterClose = await runtime2.runPromise(afterCloseProgram)
 
       expect(Array.isArray(resultAfterClose)).toBe(true)
 

@@ -33,9 +33,9 @@ class ContactObjectStore extends TaggedIDBObjectStoreService<ContactObjectStore,
           pipe(
             // @ts-ignore This should type error. only "by_name" | "by_email" should be allowed
             baseService.index(""),
-            Effect.catchAll((_err) => baseService.index("by_email")),
+            Effect.catch((_err) => baseService.index("by_email")),
             // clear up error channel to test next part
-            Effect.catchAll((_err) => Effect.die(new Error("Error Channel not empty"))),
+            Effect.catch((_err) => Effect.die(new Error("Error Channel not empty"))),
             Effect.andThen((emailIndex) => {
               return Effect.all([
                 emailIndex.count(email),
@@ -61,7 +61,7 @@ class ContactObjectStore extends TaggedIDBObjectStoreService<ContactObjectStore,
             Effect.catchTag("IDBIndexGetAllKeysError", (_) => {
               return Effect.succeed(null)
             }),
-            Effect.catchAll((_err) => {
+            Effect.catch((_err) => {
               // x should be typed as const name for the exception types ie `IndexGetExceptionType`
               let x = _err.cause.name
               if (!_err.isFromRequest) {
@@ -81,9 +81,9 @@ class ContactObjectStore extends TaggedIDBObjectStoreService<ContactObjectStore,
           pipe(
             baseService.index("by_email"),
             // clear up error channel to test next part
-            Effect.catchAll((_err) => Effect.die(new Error("Error Channel not empty"))),
+            Effect.catch((_err) => Effect.die(new Error("Error Channel not empty"))),
             Effect.andThen((emailIndex) => emailIndex.getAll(x)),
-            Effect.catchAll((_err) => {
+            Effect.catch((_err) => {
               if (_err.cause instanceof TypeError) return Effect.fail(_err)
               // there should be no type error here
               if (!_err.isFromRequest) {

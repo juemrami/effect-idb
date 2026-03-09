@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect"
+import { Effect, Layer, ServiceMap } from "effect"
 import { describe, expect, it } from "vitest"
 import { type IDBDatabaseConfig } from "../src/idbdatabase.js"
 import type { IDBObjectStoreConfig } from "../src/idbobjectstore.js"
@@ -17,15 +17,22 @@ const ContactObjectStoreConfig = {
     { name: "email", keyPath: "email" }
   ]
 }
-class ContactObjectStore extends Effect.Service<ContactObjectStore>()(
+class ContactObjectStore extends ServiceMap.Service<ContactObjectStore>()(
   "ContactObjectStore",
   {
-    dependencies: [IDBObjectStoreService.make(ContactObjectStoreConfig.name)],
-    effect: Effect.gen(function*() {
+    make: Effect.gen(function*() {
       return yield* IDBObjectStoreService
     })
   }
-) {}
+) {
+  static readonly Default = Layer.provide(
+    Layer.effect(ContactObjectStore, this.make),
+    Layer.provide(
+      IDBObjectStoreService.make(ContactObjectStoreConfig.name),
+      IDBTransactionService.ReadWrite // this default any store access to a read-write transaction
+    )
+  )
+}
 
 const NotesObjectStoreConfig: IDBObjectStoreConfig = {
   name: "notes",
@@ -38,15 +45,22 @@ const NotesObjectStoreConfig: IDBObjectStoreConfig = {
     { name: "createdAt", keyPath: "createdAt" }
   ]
 }
-class NotesObjectStore extends Effect.Service<NotesObjectStore>()(
+class NotesObjectStore extends ServiceMap.Service<NotesObjectStore>()(
   "NotesObjectStore",
   {
-    dependencies: [IDBObjectStoreService.make(NotesObjectStoreConfig.name)],
-    effect: Effect.gen(function*() {
+    make: Effect.gen(function*() {
       return yield* IDBObjectStoreService
     })
   }
-) {}
+) {
+  static readonly Default = Layer.provide(
+    Layer.effect(NotesObjectStore, this.make),
+    Layer.provide(
+      IDBObjectStoreService.make(NotesObjectStoreConfig.name),
+      IDBTransactionService.ReadWrite
+    )
+  )
+}
 
 describe("IDBObjectStore Integration", () => {
   it("should open database connection, create transaction, and put element", async () => {

@@ -1,7 +1,7 @@
-import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Ref from "effect/Ref"
+import * as ServiceMap from "effect/ServiceMap"
 import { IDBDatabaseTransactionOpenError, IDBTransactionGetObjectStoreError } from "./errors.js"
 import { IDBDatabaseService } from "./idbdatabase.js"
 import type { IDBObjectStoreConfig } from "./idbobjectstore.js"
@@ -54,9 +54,10 @@ const registryServiceEffect = Effect.gen(function*() {
   const dbService = yield* IDBDatabaseService
   const service = {
     addStore: (storeName: string) =>
-      Ref.get(storeNamesRef).pipe(
-        Effect.tap((stores) => stores.add(storeName))
-      ),
+      Effect.gen(function*() {
+        const stores = yield* Ref.get(storeNamesRef)
+        stores.add(storeName)
+      }),
     storeNames: Ref.get(storeNamesRef).pipe(
       Effect.map((stores) => Array.from(stores))
     ),
@@ -93,12 +94,12 @@ const registryServiceEffect = Effect.gen(function*() {
   return service
 })
 
-export class TransactionRegistryService extends Context.Tag(`${CONTEXT_PREFIX}TransactionRegistryService`)<
+export class TransactionRegistryService extends ServiceMap.Service<
   TransactionRegistryService,
-  Effect.Effect.Success<typeof registryServiceEffect>
->() {
-  private static serviceEffect = registryServiceEffect
-  static Live = Layer.effect(TransactionRegistryService, this.serviceEffect)
+  Effect.Success<typeof registryServiceEffect>
+>()(`${CONTEXT_PREFIX}TransactionRegistryService`) {
+  private static makeEffect = registryServiceEffect
+  static Live = Layer.effect(TransactionRegistryService, this.makeEffect)
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/IDBTransaction#instance_methods
@@ -135,10 +136,10 @@ const makeTransactionService = (permissions: "readonly" | "readwrite") =>
     }
   })
 
-export class IDBTransactionService extends Context.Tag(`${CONTEXT_PREFIX}TransactionService`)<
+export class IDBTransactionService extends ServiceMap.Service<
   IDBTransactionService,
-  Effect.Effect.Success<ReturnType<typeof makeTransactionService>>
->() {
+  Effect.Success<ReturnType<typeof makeTransactionService>>
+>()(`${CONTEXT_PREFIX}TransactionService`) {
   private static make = (permissions: "readonly" | "readwrite") => {
     return Layer.effect(IDBTransactionService, makeTransactionService(permissions)).pipe(
       Layer.provide(TransactionRegistryService.Live)

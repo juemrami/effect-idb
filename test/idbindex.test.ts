@@ -32,7 +32,7 @@ class ContactObjectStore extends TaggedIDBObjectStoreService<ContactObjectStore,
           pipe(
             // @ts-ignore This should type error. only "by_name" | "by_email" should be allowed
             baseService.index(""),
-            Effect.catchAll((_err) => baseService.index("by_email")),
+            Effect.catch((_err) => baseService.index("by_email")),
             Effect.andThen((emailIndex) => emailIndex.get(email))
           ),
         findByName: (name: string) =>

@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Ref } from "effect"
+import { Effect, Layer, pipe, Ref, ServiceMap } from "effect"
 import { expect, it } from "vitest"
 import { IDBDatabaseService } from "../src/idbdatabase.js"
 import type { IDBObjectStoreConfig } from "../src/idbobjectstore.js"
@@ -12,10 +12,10 @@ const makeStoreEffect = Effect.gen(function*() {
 })
 
 it("should share a transaction instantiated in multiple places", async () => {
-  class ContactObjectStore extends Context.Tag("ContactObjectStore")<
+  class ContactObjectStore extends ServiceMap.Service<
     ContactObjectStore,
-    Effect.Effect.Success<typeof makeStoreEffect>
-  >() {
+    Effect.Success<typeof makeStoreEffect>
+  >()("ContactObjectStore") {
     static readonly config: IDBObjectStoreConfig = {
       name: "contacts",
       params: {
@@ -44,20 +44,22 @@ it("should share a transaction instantiated in multiple places", async () => {
       { name: "createdAt", keyPath: "createdAt" }
     ]
   }
-  class NotesObjectStore extends Effect.Service<NotesObjectStore>()(
+  class NotesObjectStore extends ServiceMap.Service<NotesObjectStore>()(
     "NotesObjectStore",
     {
-      dependencies: [
-        Layer.provide(
-          IDBObjectStoreService.make(NotesObjectStoreConfig.name),
-          IDBTransactionService.ReadWrite // this default any store access to a read-write transaction
-        )
-      ],
-      effect: Effect.gen(function*() {
+      make: Effect.gen(function*() {
         return yield* IDBObjectStoreService
       })
     }
-  ) {}
+  ) {
+    static readonly Default = Layer.provide(
+      Layer.effect(NotesObjectStore, this.make),
+      Layer.provide(
+        IDBObjectStoreService.make(NotesObjectStoreConfig.name),
+        IDBTransactionService.ReadWrite // this default any store access to a read-write transaction
+      )
+    )
+  }
   const dbRuntime = createDatabaseTestRuntime({
     name: "sharedTransactionTestDB",
     version: 1,
