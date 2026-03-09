@@ -1,6 +1,6 @@
 {
   "name": "effect-indexeddb",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
   "type": "module",
   "packageManager": "pnpm@10.11.1",
   "license": "MIT",
@@ -19,7 +19,7 @@
     "coverage": "vitest --coverage"
   },
   "peerDependencies": {
-    "effect": "^3.16.10"
+    "effect": "4.0.0-beta.29"
   },
   "exports": {
     "main": "./dist/dist/mjs/index.js",
