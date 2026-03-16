@@ -1,6 +1,6 @@
 {
   "name": "effect-indexeddb",
-  "version": "1.0.0-beta.2",
+  "version": "1.0.0-beta.3",
   "type": "module",
   "packageManager": "pnpm@10.11.1",
   "license": "MIT",
@@ -35,7 +35,7 @@
     "coverage": "vitest --coverage"
   },
   "peerDependencies": {
-    "effect": "4.0.0-beta.29"
+    "effect": "4.0.0-beta.33"
   },
   "repository": {
     "type": "git",
@@ -49,7 +49,7 @@
     "@babel/core": "^7.25.2",
     "@effect/eslint-plugin": "^0.3.2",
     "@effect/language-service": "*",
-    "@effect/vitest": "4.0.0-beta.29",
+    "@effect/vitest": "4.0.0-beta.33",
     "@eslint/compat": "1.1.1",
     "@eslint/eslintrc": "3.1.0",
     "@eslint/js": "9.10.0",
@@ -57,7 +57,7 @@
     "@typescript-eslint/eslint-plugin": "^8.56.1",
     "@typescript-eslint/parser": "^8.56.1",
     "babel-plugin-annotate-pure-calls": "^0.5.0",
-    "effect": "4.0.0-beta.29",
+    "effect": "4.0.0-beta.33",
     "eslint": "^9.10.0",
     "eslint-import-resolver-typescript": "^3.6.3",
     "eslint-plugin-codegen": "^0.28.0",
