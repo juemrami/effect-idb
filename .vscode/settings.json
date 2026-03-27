@@ -10,7 +10,8 @@
 			"**/.svn": true,
 			"**/.hg": true,
 			"**/.DS_Store": true,
-			"**/Thumbs.db": true
+			"**/Thumbs.db": true,
+			"**/.jj": true
 		},
     "hide-files.files": [],
     "git.enabled": false,
