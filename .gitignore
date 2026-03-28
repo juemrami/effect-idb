@@ -5,6 +5,7 @@ node_modules/
 tmp/
 dist/
 build/
+!docs/design-notes.md
 docs/
 /scratchpad
 !scratchpad/tsconfig.json
