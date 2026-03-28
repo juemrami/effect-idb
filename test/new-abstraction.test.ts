@@ -1,6 +1,6 @@
 import { Effect, Layer, Ref, ServiceMap } from "effect"
 import { describe } from "node:test"
-import { expect, it } from "vitest"
+import { expect, expectTypeOf, it } from "vitest"
 import { IDBDatabaseService } from "../src/idbdatabase.js"
 import type { IDBObjectStoreConfig } from "../src/idbobjectstore.js"
 import { IDBObjectStoreService, TaggedIDBObjectStoreService } from "../src/idbobjectstore.js"
@@ -151,6 +151,12 @@ describe("User Extended Object Store Service Tests", () => {
     })
     dbRuntime.dispose()
   })
+  it("ensures the `TaggedIDBObjectStore.With*` transaction layer helpers propagate the IDBTransactionService", () => {
+    type WithReadOnlyRequirements = Layer.Success<typeof ContactObjectStore["WithReadOnly"]>
+    type HasTransactionService = IDBTransactionService extends WithReadOnlyRequirements ? true : false
+
+    expectTypeOf<HasTransactionService>().toEqualTypeOf<true>()
+  })
   it("should only create a single transaction registry layer for multiple stores with provided transactions", async () => {
     const dbRuntime = createDatabaseTestRuntime({
       name: "singleTransactionRegistryDB",
@@ -172,9 +178,9 @@ describe("User Extended Object Store Service Tests", () => {
     const _ = await dbRuntime.runPromise(
       Effect.provide(
         program,
-        Layer.mergeAll(
-          ContactObjectStore.WithReadWrite,
-          NoteObjectStore.WithReadWrite
+        Layer.provideMerge(
+          NoteObjectStore.Default,
+          ContactObjectStore.WithReadWrite
         )
       )
     )

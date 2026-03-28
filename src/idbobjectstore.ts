@@ -291,7 +291,7 @@ export const TaggedIDBObjectStoreService: <
     MakeRequirements | IDBTransactionService
   >,
   const LayerWithTransaction extends Layer.Layer<
-    Self,
+    Self | IDBTransactionService,
     MakeErrors,
     Exclude<MakeRequirements, IDBTransactionService>
   >
@@ -333,24 +333,24 @@ export const TaggedIDBObjectStoreService: <
     },
     WithReadWrite: {
       get(this: any) {
-        rwLayerCache ??= Layer.provide(this.Default, IDBTransactionService.ReadWrite)
+        rwLayerCache ??= Layer.provideMerge(this.Default, IDBTransactionService.ReadWrite)
         return rwLayerCache
       }
     },
     WithFreshReadWrite: {
       get(this: any) {
-        return Layer.fresh(Layer.provide(this.Default, IDBTransactionService.ReadWrite))
+        return Layer.fresh(Layer.provideMerge(this.Default, IDBTransactionService.ReadWrite))
       }
     },
     WithReadOnly: {
       get(this: any) {
-        roLayerCache ??= Layer.provide(this.Default, IDBTransactionService.ReadOnly)
+        roLayerCache ??= Layer.provideMerge(this.Default, IDBTransactionService.ReadOnly)
         return roLayerCache
       }
     },
     WithFreshReadOnly: {
       get(this: any) {
-        return Layer.fresh(Layer.provide(this.Default, IDBTransactionService.ReadOnly))
+        return Layer.fresh(Layer.provideMerge(this.Default, IDBTransactionService.ReadOnly))
       }
     }
   })
