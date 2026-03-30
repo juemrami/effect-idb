@@ -47,64 +47,65 @@ export const getRawObjectStoreFromRawTransactionEffect = (
       throw error
     }
   })
-const registryServiceEffect = Effect.gen(function*() {
-  const storeNamesRef = yield* Ref.make(new Set<string>())
-  const permissionRef = yield* Ref.make<"readonly" | "readwrite">("readonly")
-  const liveTransaction = yield* Ref.make<IDBTransaction | null>(null)
-  const dbService = yield* IDBDatabaseService
-  const service = {
-    addStore: (storeName: string) =>
-      Effect.gen(function*() {
-        const stores = yield* Ref.get(storeNamesRef)
-        stores.add(storeName)
-      }),
-    storeNames: Ref.get(storeNamesRef).pipe(
-      Effect.map((stores) => Array.from(stores))
-    ),
-    setPermissions: (permissions: "readonly" | "readwrite") => Ref.set(permissionRef, permissions),
-    makeTransaction: () =>
-      Effect.gen(function*() {
-        const storeNames = yield* service.storeNames
-        const mode = yield* Ref.get(permissionRef)
-        const nativeTx = yield* dbService.use((db) =>
-          getRawTransactionFromRawDatabaseEffect(db, {
-            storeNames,
-            mode
-          })
-        )
-        yield* Ref.update(dbService.__transactionHistoryRef, (history) => {
-          history.push({ mode, storeNames })
-          return history
-        })
-        yield* Ref.set(liveTransaction, nativeTx)
-        return nativeTx
-      }),
-    useObjectStore: (storeName: string) =>
-      Effect.gen(function*() {
-        // Requesting an object store will start the transaction if it is not already started:
-        // - making some heuristic assumptions here that, by the time this function is called via the proxy methods,
-        //   the user has finished defining/registering all the object stores used for this transaction.
-        let nativeTx = yield* Ref.get(liveTransaction)
-        if (!nativeTx) {
-          nativeTx = yield* service.makeTransaction()
-        }
-        return yield* getRawObjectStoreFromRawTransactionEffect(nativeTx, storeName)
-      })
-  }
-  return service
-})
 
 export class TransactionRegistryService extends ServiceMap.Service<
-  TransactionRegistryService,
-  Effect.Success<typeof registryServiceEffect>
->()(`${CONTEXT_PREFIX}TransactionRegistryService`) {
-  private static makeEffect = registryServiceEffect
-  static Live = Layer.effect(TransactionRegistryService, this.makeEffect)
+  TransactionRegistryService
+>()(`${CONTEXT_PREFIX}TransactionRegistryService`, {
+  make: Effect.gen(function*() {
+    const storeNamesRef = yield* Ref.make(new Set<string>())
+    const permissionRef = yield* Ref.make<"readonly" | "readwrite">("readonly")
+    const liveTransaction = yield* Ref.make<IDBTransaction | null>(null)
+    const dbService = yield* IDBDatabaseService
+    const service = {
+      addStore: (storeName: string) =>
+        Effect.gen(function*() {
+          const stores = yield* Ref.get(storeNamesRef)
+          stores.add(storeName)
+        }),
+      storeNames: Ref.get(storeNamesRef).pipe(
+        Effect.map((stores) => Array.from(stores))
+      ),
+      setPermissions: (permissions: "readonly" | "readwrite") => Ref.set(permissionRef, permissions),
+      makeTransaction: () =>
+        Effect.gen(function*() {
+          const storeNames = yield* service.storeNames
+          const mode = yield* Ref.get(permissionRef)
+          const nativeTx = yield* dbService.use((db) =>
+            getRawTransactionFromRawDatabaseEffect(db, {
+              storeNames,
+              mode
+            })
+          )
+          yield* Ref.update(dbService.__transactionHistoryRef, (history) => {
+            history.push({ mode, storeNames })
+            return history
+          })
+          yield* Ref.set(liveTransaction, nativeTx)
+          return nativeTx
+        }),
+      useObjectStore: (storeName: string) =>
+        Effect.gen(function*() {
+          // Requesting an object store will start the transaction if it is not already started:
+          // - making some heuristic assumptions here that, by the time this function is called via the proxy methods,
+          //   the user has finished defining/registering all the object stores used for this transaction.
+          let nativeTx = yield* Ref.get(liveTransaction)
+          if (!nativeTx) {
+            nativeTx = yield* service.makeTransaction()
+          }
+          return yield* getRawObjectStoreFromRawTransactionEffect(nativeTx, storeName)
+        })
+    }
+    return service
+  })
+}) {
+  static fresh = Layer.fresh(Layer.effect(this, this.make))
 }
 
-// https://developer.mozilla.org/en-US/docs/Web/API/IDBTransaction#instance_methods
-const makeTransactionService = (permissions: "readonly" | "readwrite") =>
-  Effect.gen(function*() {
+export class IDBTransactionService extends ServiceMap.Service<
+  IDBTransactionService
+>()(`${CONTEXT_PREFIX}TransactionService`, {
+  // https://developer.mozilla.org/en-US/docs/Web/API/IDBTransaction#instance_methods
+  make: Effect.fn(function*(permissions: "readonly" | "readwrite") {
     const registry = yield* TransactionRegistryService
     yield* registry.setPermissions(permissions)
     return {
@@ -135,18 +136,16 @@ const makeTransactionService = (permissions: "readonly" | "readwrite") =>
         })
     }
   })
-
-export class IDBTransactionService extends ServiceMap.Service<
-  IDBTransactionService,
-  Effect.Success<ReturnType<typeof makeTransactionService>>
->()(`${CONTEXT_PREFIX}TransactionService`) {
-  private static make = (permissions: "readonly" | "readwrite") => {
-    return Layer.effect(IDBTransactionService, makeTransactionService(permissions)).pipe(
-      Layer.provide(TransactionRegistryService.Live)
+}) {
+  /** Warning: This layer is cacheable by ambient/global effect runtime layer memoMaps. \
+   * If you are using this layer you understand the limitations around macrotask boundaries and the idb transaction lifecycle
+   */
+  static layer = (permissions: "readonly" | "readwrite") =>
+    Layer.provide(
+      Layer.effect(this, this.make(permissions)),
+      TransactionRegistryService.fresh
     )
-  }
-  // may need fresh layers for scope isolation and parallel transactions
-  // private static _makeFresh: typeof this.make = (perms) => Layer.fresh(this.make(perms))
-  static ReadWrite = this.make("readwrite")
-  static ReadOnly = this.make("readonly")
+  static layerFresh = (permissions: "readonly" | "readwrite") => Layer.fresh(this.layer(permissions))
+  static ReadWrite = this.layerFresh("readwrite")
+  static ReadOnly = this.layerFresh("readonly")
 }
