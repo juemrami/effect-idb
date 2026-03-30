@@ -244,7 +244,7 @@ describe("User Extended Object Store Service Tests", () => {
     const _ = await dbRuntime.runPromise(
       Effect.provide(
         program,
-        Layer.mergeAll(ContactObjectStore.WithFreshReadWrite, NoteObjectStore.WithReadWrite.pipe(Layer.fresh))
+        Layer.mergeAll(ContactObjectStore.WithReadWrite, NoteObjectStore.WithReadWrite)
       )
     )
     const txns = await dbRuntime.runPromise(Effect.gen(function*() {
