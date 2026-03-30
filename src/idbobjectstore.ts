@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as ServiceMap from "effect/ServiceMap"
 
+import { pipe } from "effect/Function"
 import { IDBIndexOperationErrorMap, IDBObjectStoreOperationErrorMap } from "./errors.js"
 import { IDBTransactionService, TransactionRegistryService } from "./idbtransaction.js"
 
@@ -285,7 +286,7 @@ export const TaggedIDBObjectStoreService: <
   const MakeShape extends Effect.Success<ReturnType<MakeFromBase>>,
   const MakeErrors extends Effect.Error<ReturnType<MakeFromBase>>,
   const MakeRequirements extends Effect.Services<ReturnType<MakeFromBase>>,
-  const DefaultLayer extends Layer.Layer<
+  const LayerWithoutTransaction extends Layer.Layer<
     Self,
     MakeErrors,
     MakeRequirements | IDBTransactionService
@@ -303,11 +304,13 @@ export const TaggedIDBObjectStoreService: <
   }
 ) => ServiceMap.ServiceClass<Self, Identifier, MakeShape> & {
   readonly Config: Config
-  readonly Default: DefaultLayer
+  readonly layerNoTransaction: LayerWithoutTransaction
   readonly WithReadWrite: LayerWithTransaction
   readonly WithReadOnly: LayerWithTransaction
-  readonly WithFreshReadWrite: LayerWithTransaction
-  readonly WithFreshReadOnly: LayerWithTransaction
+  /** warning: this layer is cacheable by its runtimes service memoMap. prefer `layerNoTransaction`.
+   * @deprecated use `layerNoTransaction` instead
+   */
+  readonly Default: LayerWithoutTransaction
 } = <Self, DataShape>() => (key, options) => {
   const serviceEffect = Effect.gen(function*() {
     const txn = yield* IDBTransactionService
@@ -317,8 +320,9 @@ export const TaggedIDBObjectStoreService: <
 
   let TagClass = ServiceMap.Service<Self>()(key, { make: serviceEffect })
 
-  // Layer caches. Prevents multiple calls to layer make effect.
-  let defaultLayerCache, rwLayerCache, roLayerCache
+  // Cache default layer instance so repeated getter access returns the same identity.
+  // Effect memoization keys off layer identity, so this avoids rebuilding identical layers on every access.
+  let defaultCache, freshDefaultCache, rwLayerCache, roLayerCache
   TagClass = Object.defineProperties(TagClass, {
     Config: {
       get(this: any) {
@@ -327,30 +331,32 @@ export const TaggedIDBObjectStoreService: <
     },
     Default: {
       get(this: typeof TagClass) {
-        defaultLayerCache ??= Layer.effect(this, this.make)
-        return defaultLayerCache
+        defaultCache ??= Layer.effect(this, this.make)
+        return defaultCache
+      }
+    },
+    layerNoTransaction: {
+      get(this: typeof TagClass) {
+        freshDefaultCache ??= Layer.fresh(Layer.effect(this, this.make))
+        return freshDefaultCache
       }
     },
     WithReadWrite: {
       get(this: any) {
-        rwLayerCache ??= Layer.provideMerge(this.Default, IDBTransactionService.ReadWrite)
+        rwLayerCache ??= pipe(
+          Layer.provideMerge(this.layerNoTransaction, IDBTransactionService.ReadWrite),
+          Layer.fresh
+        )
         return rwLayerCache
-      }
-    },
-    WithFreshReadWrite: {
-      get(this: any) {
-        return Layer.fresh(Layer.provideMerge(this.Default, IDBTransactionService.ReadWrite))
       }
     },
     WithReadOnly: {
       get(this: any) {
-        roLayerCache ??= Layer.provideMerge(this.Default, IDBTransactionService.ReadOnly)
+        roLayerCache ??= pipe(
+          Layer.provideMerge(this.layerNoTransaction, IDBTransactionService.ReadOnly),
+          Layer.fresh
+        )
         return roLayerCache
-      }
-    },
-    WithFreshReadOnly: {
-      get(this: any) {
-        return Layer.fresh(Layer.provideMerge(this.Default, IDBTransactionService.ReadOnly))
       }
     }
   })

@@ -4,6 +4,7 @@ import indexedDB from "fake-indexeddb"
 import { IDBTransactionGetObjectStoreError } from "../src/errors.js"
 import { IDBDatabaseService } from "../src/idbdatabase.js"
 import { TaggedIDBObjectStoreService } from "../src/idbobjectstore.js"
+import { IDBTransactionService } from "../src/idbtransaction.js"
 
 type TestCase = {
   readonly id: string
@@ -67,7 +68,7 @@ export const idbTransactionDesignChoices = [
         effect: Effect.gen(function*() {
           const db = yield* IDBDatabaseService
           const txnHistory = yield* Ref.get(db.__transactionHistoryRef)
-          yield* seedWorkouts
+          yield* seedWorkouts // note: seeding data adds a transaction
           const program1 = Effect.gen(function*() {
             const store = yield* WorkoutStoreService
             return yield* store.getAllWorkouts()
@@ -90,10 +91,10 @@ export const idbTransactionDesignChoices = [
   },
 
   {
-    // WithFresh* helpers always call Layer.fresh internally — they never share a transaction
+    // transaction layer helpers always call Layer.fresh internally — they never share a transaction
     // via MemoMap even when the same layer type appears in multiple concurrent programs.
     id: "fresh-by-default",
-    guarantee: "WithFresh* layer helpers always produce a new transaction — never share via MemoMap.",
+    guarantee: "Tagged objectStore `With*` layer helpers always produce a new transaction — never share via MemoMap.",
     tests: [
       {
         // scenario: Two programs with identical WithReadWrite provisions run concurrently
@@ -104,7 +105,6 @@ export const idbTransactionDesignChoices = [
         relatedSpecs: ["one-layer-one-transaction"],
         effect: Effect.gen(function*() {
           const db = yield* IDBDatabaseService
-          // two programs each with own transaction provision running concurrently
           const program1 = Effect.gen(function*() {
             const store = yield* WorkoutStoreService
             return yield* store.newWorkout({
@@ -113,9 +113,7 @@ export const idbTransactionDesignChoices = [
               createdAt: Date.now(),
               updatedAt: Date.now()
             })
-          }).pipe(
-            Effect.provide(WorkoutStoreService.WithReadWrite)
-          )
+          })
           const program2 = Effect.gen(function*() {
             const store = yield* WorkoutStoreService
             return yield* store.newWorkout({
@@ -124,22 +122,28 @@ export const idbTransactionDesignChoices = [
               createdAt: Date.now(),
               updatedAt: Date.now()
             })
-          }).pipe(
-            Effect.provide(WorkoutStoreService.WithReadWrite)
-          )
-          yield* Effect.all([program1, program2], { concurrency: "unbounded" })
+          })
+          yield* Effect.all([
+            program1.pipe(Effect.provide(WorkoutStoreService.WithReadWrite)),
+            program2.pipe(Effect.provide(WorkoutStoreService.WithReadWrite))
+          ], { concurrency: "unbounded" })
           const txnHistory = yield* Ref.get(db.__transactionHistoryRef)
           expect(txnHistory.length).toBe(2) // Should have two transactions
           expect(Object.is(txnHistory[0], txnHistory[1])).toBe(false) // Should be distinct transactions
+
+          yield* Effect.all([
+            program1.pipe(
+              Effect.provide(Layer.provide(WorkoutStoreService.layerNoTransaction, IDBTransactionService.ReadWrite))
+            ),
+            program2.pipe(
+              Effect.provide(Layer.provide(WorkoutStoreService.layerNoTransaction, IDBTransactionService.ReadWrite))
+            )
+          ], { concurrency: "unbounded" })
+          expect(txnHistory.length).toBe(4) // Should have four transactions total — two more from the transaction layer provisions
+          expect(Object.is(txnHistory[2], txnHistory[3])).toBe(false) // Should be distinct transactions
+
           return yield* Effect.void
         })
-      },
-      {
-        // scenario: Two Effect.provide calls run sequentially.
-        // assertion: txnHistory.length === 2 — each provision produces its own transaction.
-        id: "sequential-provisions",
-        description: "it should open a new transaction for each sequential provision boundary",
-        relatedSpecs: ["one-provision-one-transaction"]
       }
     ]
   },
@@ -266,7 +270,7 @@ export const idbTransactionDesignChoices = [
           yield* seedWorkouts
           // create overlapping provisions with different scopes
           const provisionA = WorkoutStoreService.WithReadOnly
-          const provisionB = Layer.provideMerge(ContactObjectStore.Default, WorkoutStoreService.WithReadOnly)
+          const provisionB = Layer.provideMerge(ContactObjectStore.layerNoTransaction, WorkoutStoreService.WithReadOnly)
           const effectA = Effect.gen(function*() {
             const workoutStore = yield* WorkoutStoreService
             yield* workoutStore.getWorkout(1 as IDBValidKey)
@@ -279,15 +283,18 @@ export const idbTransactionDesignChoices = [
             yield* contactStore.getAll()
           }).pipe(Effect.provide(provisionB))
 
-          yield* Effect.all([effectA, effectB], { concurrency: "unbounded" })
           const txnHistory = yield* Ref.get(db.__transactionHistoryRef)
-          expect(txnHistory.length).toBe(2) // Should have two transactions
-          if (txnHistory[0].storeNames.length === 1) {
-            expect(txnHistory[0].storeNames).toEqual(["workouts"])
-            expect(txnHistory[1].storeNames).toEqual(["workouts", "contacts"])
+          const numTransactionsBefore = txnHistory.length
+          yield* Effect.all([effectA, effectB], { concurrency: "unbounded" })
+          const numTransactionsUsed = txnHistory.length - numTransactionsBefore
+          expect(numTransactionsUsed).toBe(2) // Should have made two transactions
+          const [transaction1, transaction2] = txnHistory.slice(-2)
+          if (transaction1.storeNames.length === 1) {
+            expect(transaction1.storeNames).toEqual(["workouts"])
+            expect(transaction2.storeNames).toEqual(["workouts", "contacts"])
           } else {
-            expect(txnHistory[1].storeNames).toEqual(["workouts"])
-            expect(txnHistory[0].storeNames).toEqual(["workouts", "contacts"])
+            expect(transaction1.storeNames).toEqual(["workouts"])
+            expect(transaction2.storeNames).toEqual(["workouts", "contacts"])
           }
         })
       }
@@ -295,15 +302,15 @@ export const idbTransactionDesignChoices = [
   },
 
   {
-    // When an inner sub-program calls Effect.provide with its own WithFresh layer while an outer
+    // When an inner sub-program calls Effect.provide with its own fresh layer while an outer
     // program already has a transaction layer in scope, the inner provision gets a new transaction.
     // It does not inherit or reuse the outer one.
     id: "nested-provision-own-transaction",
-    guarantee: "An inner Effect.provide with its own WithFresh layer gets a separate transaction, not the outer one.",
+    guarantee: "An inner Effect.provide with its own fresh layer gets a separate transaction, not the outer one.",
     tests: [
       {
         // scenario: outer program provides a transaction layer; inner sub-program also provides
-        //           its own WithFresh layer for the same store.
+        //           its own fresh layer for the same store.
         // assertion: txnHistory.length === 2 — inner provision does not reuse the outer transaction.
         id: "nested-provision-own-transaction",
         description:
