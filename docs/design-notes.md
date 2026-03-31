@@ -25,7 +25,7 @@ more succinctly/correctly put by a clanker:
 	- doing this would imply all that a transaction scoped to 4 object stores would always include all 4 when re-requested across async boundaries.
 
 
-The latter option is obviously more ergonomic and friendly to users that dont know the limiations of indexedb
+The latter option is more ergonomic and friendly to users that dont know the limitations of indexedb
 
 ```ts
 yield* objectStoreA.write(data) // object store accessed, transaction is provisioned
@@ -33,17 +33,16 @@ yield* fetch("https://...") // / transaction is closed at async boundary, transa
 yield* objectStoreB.write(data) // new transaction is provisioned when an object store is accessed after async
 ```
 
-the former behaves in regards to the spec
+the former behaves in regards to the spec so it doesn't add additional mental models.
 ```ts
 yield* objectStoreA.write(data)
-yield* fetch("https://...")   // transaction is closed at async boundry
-yield* objectStoreB.write(data) // 💀 results in error because transaction is closed
-
-/** instead consider**/
-
+yield* fetch("https://...") // finishes in a different marcotask/event-loop
+yield* objectStoreB.write(data) // 💀 results in error because transaction is closed by then
+```
+instead, youd have data fetch outside of the transaction programs
+```ts
 // fetch first, outside the transaction
 const data = yield* fetch("https://...")
-
 // then open the transaction only for the IDB work
 yield* Effect.gen(function*() {
   yield* objectStoreA.write(data)
@@ -52,7 +51,7 @@ yield* Effect.gen(function*() {
 ```
 
 I can see the value of both, the former forces you to be a bite more strict.
-More importantly, it doesnt hide any control flow, which makes it easier to debug from a consumers prespective.
+More importantly, it doesn't hide any control flow, which makes it easier to debug from a consumers prespective.
 
 
 
@@ -262,3 +261,4 @@ Expectations is for fresh Transactions to be provided where a layer is construct
 	- It arguably makes the transaction lifetime less predictable.
 		- A user reading the code can't tell when the transaction actually opens without knowing the lazy open rule
 
+---

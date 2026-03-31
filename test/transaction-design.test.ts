@@ -1,6 +1,8 @@
+import { NodeFileSystem } from "@effect/platform-node"
 import { expect, it } from "@effect/vitest"
-import { Effect, Exit, Fiber, Layer, pipe, Ref, Result } from "effect"
+import { Effect, Exit, Fiber, FileSystem, Layer, pipe, Ref, Result } from "effect"
 import indexedDB from "fake-indexeddb"
+import { readFileSync } from "node:fs"
 import { IDBTransactionGetObjectStoreError } from "../src/errors.js"
 import { IDBDatabaseService } from "../src/idbdatabase.js"
 import { TaggedIDBObjectStoreService } from "../src/idbobjectstore.js"
@@ -85,6 +87,39 @@ export const idbTransactionDesignChoices = [
           yield* Effect.all([program1, program2])
           expect(txnHistory.length - numTransactionsBefore).toBe(2) // Should have made two transactions
           return yield* Effect.void
+        })
+      },
+      {
+        id: "single-program-multiple-provisions",
+        description:
+          "it should allow for accessing multiple stores in the same program -- each with their own transaction",
+        relatedSpecs: ["fresh-by-default", "scope-from-layer-composition"],
+        effect: Effect.gen(function*() {
+          const db = yield* IDBDatabaseService
+          const program = Effect.gen(function*() {
+            const contactStore = yield* ContactObjectStore
+            const workoutStore = yield* WorkoutStoreService
+            const keyA = yield* contactStore.add({
+              name: "Test User"
+            })
+            yield* workoutStore.newWorkout({
+              exercises: [{ name: String(keyA) }]
+            })
+            return yield* Effect.all([contactStore.getAll(), workoutStore.getAllWorkouts()])
+          }).pipe(
+            Effect.provide(
+              Layer.merge(ContactObjectStore.WithReadWrite, WorkoutStoreService.WithReadWrite)
+            )
+          )
+          const [allContacts, allWorkouts] = yield* program
+          const history = yield* Ref.get(db.__transactionHistoryRef)
+          expect(history.length).toBe(2) // Should have made two transactions — one for each store
+          const [transaction1, transaction2] = history.slice(-2)
+          expect(transaction1.storeNames).toEqual(["contacts"])
+          expect(transaction2.storeNames).toEqual(["workouts"])
+          expect(allWorkouts.length).toBe(1)
+          // @ts-expect-error
+          expect(allWorkouts[0].exercises[0].name).toBe(String(allContacts[0].id))
         })
       }
     ]
@@ -214,6 +249,41 @@ export const idbTransactionDesignChoices = [
           expect(Result.isFailure(result)).toBe(true)
           expect(yield* Result.getFailure(result).asEffect()).toBeInstanceOf(IDBTransactionGetObjectStoreError)
         })
+      },
+      {
+        // scenario: A synchronous file read happens within a transaction scope should be completely fine however
+        id: "sync-file-read-between-store-ops",
+        description: "it should keep a transaction alive across synchronous file reads between store operations",
+        relatedSpecs: ["one-layer-one-transaction"],
+        effect: Effect.gen(function*() {
+          const tempFileContents = "lorem ipsum dolor sit amet"
+          const fs = yield* FileSystem.FileSystem
+          const tempFilePath = yield* fs.makeTempFileScoped()
+          yield* fs.writeFile(tempFilePath, Buffer.from(tempFileContents, "utf8"))
+
+          const program = Effect.gen(function*() {
+            const store = yield* WorkoutStoreService
+            const firstKey = yield* store.newWorkout({
+              exercises: [{ name: "before-sync-read" }]
+            })
+            const fileContents = yield* Effect.sync(() => readFileSync(tempFilePath, "utf8"))
+            const secondKey = yield* store.newWorkout({
+              exercises: [{ name: `after-${fileContents}` }]
+            })
+            return { firstKey, secondKey, fileContents }
+          }).pipe(
+            Effect.provide(WorkoutStoreService.WithReadWrite)
+          )
+          const result = yield* program
+          const db = yield* IDBDatabaseService
+          const history = yield* Ref.get(db.__transactionHistoryRef)
+          expect(result.fileContents).toBe(tempFileContents)
+          expect(result.firstKey).toBe(1)
+          expect(result.secondKey).toBe(2)
+          expect(history.length).toBe(1)
+        }).pipe(
+          Effect.provide(NodeFileSystem.layer)
+        )
       }
     ]
   },
