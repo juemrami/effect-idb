@@ -296,6 +296,7 @@ export class IDBDatabaseService extends ServiceMap.Service<IDBDatabaseService>()
 class IDBFactoryService extends ServiceMap.Service<IDBFactoryService>()(`${CONTEXT_PREFIX}FactoryService`, {
   make: Effect.fn(function*(indexedDB: IDBFactory) {
     return yield* Effect.succeed({
+      // ** Requests, opens, and returns a connection to a database */
       open: (config: IDBDatabaseConfig) =>
         Effect.gen(function*() {
           // Read to understand possible order of the event cbs
@@ -402,7 +403,26 @@ class IDBFactoryService extends ServiceMap.Service<IDBFactoryService>()(`${CONTE
             }
           })
           return dbConnection
+        }),
+      /** Array of objects containing name and version of all available databases */
+      databases: Effect.suspend(() => Effect.promise(indexedDB.databases)),
+      /** Deletes a database by name. Silently succeeds if the database does not exist. */
+      deleteDatabase: Effect.fn(function*(name: string) {
+        return yield* Effect.tryPromise({
+          try: () =>
+            new Promise<null>((resolve, reject) => {
+              const request = indexedDB.deleteDatabase(name)
+              // If the operation is successful, the value of the request's result property is null.
+              request.onsuccess = () => resolve(request.result as unknown as null)
+              request.onerror = () => reject(request.error)
+            }),
+          catch: (error) => {
+            const matched = IDBDatabaseOpenError.fromUnknown(error, { name }, true)
+            if (matched) return matched
+            else throw error
+          }
         })
+      })
     })
   })
 }) {
