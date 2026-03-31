@@ -403,7 +403,8 @@ class IDBFactoryService extends ServiceMap.Service<IDBFactoryService>()(`${CONTE
             }
           })
           return dbConnection
-        })
+        }),
+      databases: Effect.suspend(() => Effect.promise(indexedDB.databases))
     })
   })
 }) {
