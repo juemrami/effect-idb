@@ -9,6 +9,6 @@ import { type IDBDatabaseConfig, IDBDatabaseService } from "./idbdatabase.js"
  */
 export const createDatabaseRuntime = (config: IDBDatabaseConfig) => {
   return ManagedRuntime.make(
-    IDBDatabaseService.makeLive(config)
+    IDBDatabaseService.layerBrowser(config)
   )
 }

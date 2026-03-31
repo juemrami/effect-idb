@@ -5,6 +5,6 @@ import { IDBDatabaseService } from "../src/idbdatabase.js"
 
 export const createDatabaseTestRuntime = (config: IDBDatabaseConfig) => {
   return ManagedRuntime.make(
-    IDBDatabaseService.makeTest(config, indexedDB) // Pass the fake indexedDB instance
+    IDBDatabaseService.layer(config, indexedDB) // Pass the fake indexedDB instance
   )
 }

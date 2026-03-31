@@ -22,12 +22,7 @@ export {
   // transaction
   IDBTransactionGetObjectStoreError
 } from "./errors.js"
-export {
-  type IDBDatabaseConfig,
-  IDBDatabaseService,
-  IDBFactoryImplementation,
-  IDBFactoryService
-} from "./idbdatabase.js"
+export { type IDBDatabaseConfig, IDBDatabaseService } from "./idbdatabase.js"
 export { IDBObjectStoreService, TaggedIDBObjectStoreService } from "./idbobjectstore.js"
 export type { IDBObjectStoreConfig, IDBObjectStoreIndexParams } from "./idbobjectstore.js"
 export { type IDBTransactionParams, IDBTransactionService } from "./idbtransaction.js"
