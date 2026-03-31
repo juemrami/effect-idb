@@ -216,8 +216,8 @@ describe("Database Upgrade Service", () => {
         // 1: upgradeService.autoGenerateObjectStores,
         2: Effect.gen(function*() {
           yield* upgradeService.autoGenerateObjectStores // incase new object stores/indexes are added
-          const contacts = yield* upgradeService.objectStore(ContactObjectStoreConfig.name)
-          const notes = yield* upgradeService.objectStore(NotesObjectStoreConfig.name)
+          const contacts = yield* upgradeService.transaction.objectStore(ContactObjectStoreConfig.name)
+          const notes = yield* upgradeService.transaction.objectStore(NotesObjectStoreConfig.name)
           const key = yield* contacts.add({ name: "Upgrade Test", email: "upgrade@test.com" })
           yield* Console.log(`Added contact with key: ${key}`)
           yield* notes.add({
@@ -281,7 +281,7 @@ describe("Database Upgrade Service", () => {
           1: upgradeService.autoGenerateObjectStores,
           // step 2: modify part of the index schema, ensure it was changed
           2: Effect.gen(function*() {
-            const store = yield* upgradeService.useTransaction((upgradeTxn) =>
+            const store = yield* upgradeService.transaction.use((upgradeTxn) =>
               Effect.gen(function*() {
                 upgradeTxn.objectStore(ContactObjectStoreConfig.name).deleteIndex("createdAt")
                 const store = upgradeTxn.objectStore(ContactObjectStoreConfig.name)
