@@ -511,7 +511,7 @@ const seedWorkouts = Effect.gen(function*() {
   }
 }).pipe(Effect.provide(WorkoutStoreService.WithReadWrite))
 const provideDatabase = (name: string) =>
-  Effect.provide(IDBDatabaseService.makeTest({
+  Effect.provide(IDBDatabaseService.layer({
     name,
     version: 1,
     autoObjectStores: [WorkoutStoreService, ContactObjectStore]

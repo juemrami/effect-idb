@@ -265,7 +265,7 @@ describe("Database Upgrade Service", () => {
     // step 1 declare and object store with an index schema
     const UnexpectedUpgradeError = new Error("Unexpected Upgrade Error")
     const makeDbLayer = (version?: number) => {
-      return IDBDatabaseService.makeTest({
+      return IDBDatabaseService.layer({
         name: dbName,
         version, // undefined opens to latest db version
         autoObjectStores: [{
@@ -355,7 +355,7 @@ describe("Database Upgrade Service", () => {
     const UnexpectedUpgradeError = new Error("Unexpected Upgrade Error")
     const StoreSet = [ContactObjectStore, NotesObjectStore]
     const createDbLayer = (version?: number) =>
-      IDBDatabaseService.makeTest({
+      IDBDatabaseService.layer({
         name: dbName,
         version,
         autoObjectStores: StoreSet,

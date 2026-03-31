@@ -114,7 +114,7 @@ class ContactObjectStore extends TaggedIDBObjectStoreService<ContactObjectStore,
   }
 ) {}
 
-const dbLayer = IDBDatabaseService.makeTest({
+const dbLayer = IDBDatabaseService.layer({
   name: "test-db",
   version: 1,
   autoObjectStores: [ContactObjectStore]

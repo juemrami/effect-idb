@@ -71,7 +71,7 @@ class NotesObjectStore extends TaggedIDBObjectStoreService<NotesObjectStore, Not
 ) {}
 
 // Create a database connection layer
-const AppDatabase = IDBDatabaseService.makeTest({
+const AppDatabase = IDBDatabaseService.layer({
   name: "app-database",
   version: 1,
   // Auto object stores will have any added-removed indexes automatically managed across versions

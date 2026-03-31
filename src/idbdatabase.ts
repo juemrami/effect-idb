@@ -22,29 +22,6 @@ import type { IDBTransactionParams } from "./idbtransaction.js"
 
 const CONTEXT_PREFIX = "/src/idbdatabase:"
 
-export class IDBFactoryImplementation
-  extends ServiceMap.Service<IDBFactoryImplementation, IDBFactory>()(`${CONTEXT_PREFIX}IDBFactory`)
-{
-  static readonly Browser = Layer.sync(IDBFactoryImplementation, () => window.indexedDB)
-  static readonly makeExternal = (indexedDB: IDBFactory) => Layer.sync(IDBFactoryImplementation, () => indexedDB)
-}
-
-const createBaseService = Effect.fn(function*(db: IDBDatabase) {
-  // handle to raw db connection
-  const transactionHistory = yield* Ref.make([] as Array<IDBTransactionParams>)
-  const use = <A, E, R>(cb: (db: IDBDatabase) => Effect.Effect<A, E, R>) =>
-    Effect.gen(function*() {
-      return yield* cb(db)
-    })
-  return {
-    name: db.name,
-    version: db.version,
-    objectStoreNames: Effect.sync(() => Array.from(db.objectStoreNames) as Array<string>),
-    use,
-    __transactionHistoryRef: transactionHistory
-  }
-})
-
 const makeUpgradeObjectStoreService = Effect.fn(function*(storeName: string, upgradeTxn: IDBTransaction) {
   const idbStore = yield* safeAcquireIDBObjectStore(upgradeTxn, storeName)
   const storeProxy = yield* pipe(
@@ -79,7 +56,6 @@ const makeUpgradeObjectStoreService = Effect.fn(function*(storeName: string, upg
       })
   }
 })
-type DBServiceShape = Effect.Success<ReturnType<typeof createBaseService>>
 /** Creates a version of IDBDatabaseService with additional methods that can only be used during the IDB's onupgradeneeded handler
  * Object stores accessed via this service's `.objectStore` are similarly extended versions of IDBObjectStoreService.
  */
@@ -231,7 +207,7 @@ const createUpgradeService = Effect.fn(
       }
     )
     return {
-      ...yield* createBaseService(db),
+      ...yield* IDBDatabaseService.make(db),
       /** Creates an object store and any defined indexes on the idb database*/
       createObjectStore,
       /** Deletes an object store and any indexes from the idb database */
@@ -269,44 +245,58 @@ export type IDBDatabaseConfig = {
     upgradeService: Effect.Success<ReturnType<typeof createUpgradeService>>
   ) => Record<number, Effect.Effect<any, any, never>>
 }
-export class IDBDatabaseService
-  extends ServiceMap.Service<IDBDatabaseService, DBServiceShape>()(`${CONTEXT_PREFIX}DatabaseService`)
-{
-  static make = (config: IDBDatabaseConfig) =>
+export class IDBDatabaseService extends ServiceMap.Service<IDBDatabaseService>()(`${CONTEXT_PREFIX}DatabaseService`, {
+  make: Effect.fn(function*(db: IDBDatabase) {
+    const transactionHistory = yield* Ref.make([] as Array<IDBTransactionParams>)
+    const use = <A, E, R>(cb: (db: IDBDatabase) => Effect.Effect<A, E, R>) =>
+      Effect.gen(function*() {
+        return yield* cb(db)
+      })
+    // https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase
+    return {
+      name: db.name,
+      version: db.version,
+      objectStoreNames: Effect.sync(() => Array.from(db.objectStoreNames) as Array<string>),
+      use,
+      /**
+       * `close` is automatically handled by the browser on page unload.
+       * Only times you'd want to explicitly `close` is because of:
+       * - new database version opened on another tab
+       * - before db version upgrades
+       * - db deletions (new db connections cant upgrade till old ones are closed)
+       */
+      close: Effect.sync(() => db.close()),
+      __transactionHistoryRef: transactionHistory
+    }
+  })
+}) {
+  /** Creates a layer that automatically closes the database connection when the layer is released */
+  private static layerNoFactory = (config: IDBDatabaseConfig) =>
     Layer.effect(
-      IDBDatabaseService,
+      this,
       Effect.gen(function*() {
         const dbFactory = yield* IDBFactoryService
         const connection = yield* Effect.acquireRelease(
           dbFactory.open(config),
-          /**
-           * `close` is automatically handled by the browser on page unload
-           * only times you'd want to explicitly close is when we want to because of:
-           * - new database version opened on another tab
-           * - or before db version upgrades
-           * - or db deletions (new db connections cant upgrade till old ones are closed)
-           * - .close raises no errors
-           */
           (db) => Effect.sync(() => db.close())
         )
-        return yield* createBaseService(connection)
+        return yield* IDBDatabaseService.make(connection)
       })
     )
-  static makeLive = (config: IDBDatabaseConfig) =>
+  static layerBrowser = (config: IDBDatabaseConfig) =>
     Layer.provide(
-      IDBDatabaseService.make(config),
-      IDBFactoryService.Live
+      IDBDatabaseService.layerNoFactory(config),
+      IDBFactoryService.layerBrowser
     )
-  static makeTest = (config: IDBDatabaseConfig, indexedDB: IDBFactory) =>
+  static layer = (config: IDBDatabaseConfig, indexedDB: IDBFactory) =>
     Layer.provide(
-      IDBDatabaseService.make(config),
-      IDBFactoryService.makeTest(indexedDB)
+      IDBDatabaseService.layerNoFactory(config),
+      IDBFactoryService.layer(indexedDB)
     )
 }
-export class IDBFactoryService extends ServiceMap.Service<IDBFactoryService>()(`${CONTEXT_PREFIX}FactoryService`, {
-  make: Effect.gen(function*() {
-    const indexedDB = yield* IDBFactoryImplementation
-    return {
+class IDBFactoryService extends ServiceMap.Service<IDBFactoryService>()(`${CONTEXT_PREFIX}FactoryService`, {
+  make: Effect.fn(function*(indexedDB: IDBFactory) {
+    return yield* Effect.succeed({
       open: (config: IDBDatabaseConfig) =>
         Effect.gen(function*() {
           // Read to understand possible order of the event cbs
@@ -414,11 +404,9 @@ export class IDBFactoryService extends ServiceMap.Service<IDBFactoryService>()(`
           })
           return dbConnection
         })
-    }
+    })
   })
 }) {
-  private static Default = Layer.effect(IDBFactoryService, this.make)
-  static Live = Layer.provide(this.Default, IDBFactoryImplementation.Browser)
-  static makeTest = (idbFactory: IDBFactory) =>
-    Layer.provide(this.Default, IDBFactoryImplementation.makeExternal(idbFactory))
+  static layer = (idbFactory: IDBFactory) => Layer.effect(this, this.make(idbFactory))
+  static layerBrowser = Layer.effect(this, Effect.suspend(() => this.make(window.indexedDB)))
 }
