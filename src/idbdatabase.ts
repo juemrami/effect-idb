@@ -44,13 +44,47 @@ const createBaseService = Effect.fn(function*(db: IDBDatabase) {
     __transactionHistoryRef: transactionHistory
   }
 })
+
+const makeUpgradeObjectStoreService = Effect.fn(function*(storeName: string, upgradeTxn: IDBTransaction) {
+  const idbStore = yield* safeAcquireIDBObjectStore(upgradeTxn, storeName)
+  const storeProxy = yield* pipe(
+    makeObjectStoreProxyService(storeName),
+    Effect.provideService(LazyTransactionRegistry, {
+      storeNames: Effect.succeed([storeName]),
+      acquireObjectStore: () => Effect.succeed(idbStore),
+      registerStore: () => Effect.void,
+      acquireTransaction: () => Effect.succeed(upgradeTxn),
+      setPermissions: () => Effect.void
+    })
+  )
+  return {
+    ...storeProxy,
+    createIndex: (index: IDBObjectStoreIndexParams) =>
+      Effect.try({
+        try: () => idbStore.createIndex(index.name, index.keyPath, index.options),
+        catch: (error) => {
+          const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "createIndex")
+          if (matched) return matched
+          else throw error
+        }
+      }),
+    deleteIndex: (indexName: string) =>
+      Effect.try({
+        try: () => idbStore.deleteIndex(indexName),
+        catch: (error) => {
+          const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "deleteIndex")
+          if (matched) return matched
+          else throw error
+        }
+      })
+  }
+})
 type DBServiceShape = Effect.Success<ReturnType<typeof createBaseService>>
 /** Creates a version of IDBDatabaseService with additional methods that can only be used during the IDB's onupgradeneeded handler
  * Object stores accessed via this service's `.objectStore` are similarly extended versions of IDBObjectStoreService.
  */
 const createUpgradeService = Effect.fn(
   function*(db: IDBDatabase, config: IDBDatabaseConfig, upgradeTxn: IDBTransaction) {
-    const baseService = yield* createBaseService(db)
     // todo: improve typing to exclude CreateIndexError when indexes is empty/undefined
     const createObjectStore = (
       name: string,
@@ -104,51 +138,6 @@ const createUpgradeService = Effect.fn(
         return incoming === existing
       }
     }
-    const getObjectStoreUpgradeService = Effect.fn(function*(storeName) {
-      const storeUpgradeService = pipe(
-        Effect.service(LazyTransactionRegistry),
-        Effect.andThen((tx) => tx.acquireObjectStore(storeName)),
-        Effect.andThen(
-          (rawStore) =>
-            pipe(
-              makeObjectStoreProxyService(storeName),
-              Effect.map((baseStoreService) => ({
-                ...baseStoreService,
-                createIndex: (index: IDBObjectStoreIndexParams) =>
-                  Effect.try({
-                    try: () => rawStore.createIndex(index.name, index.keyPath, index.options),
-                    catch: (error) => {
-                      const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "createIndex")
-                      if (matched) return matched
-                      else throw error
-                    }
-                  }),
-                deleteIndex: (indexName: string) =>
-                  Effect.try({
-                    try: () => rawStore.deleteIndex(indexName),
-                    catch: (error) => {
-                      const matched = IDBObjectStoreOperationErrorMap.fromUnknown(error, "deleteIndex")
-                      if (matched) return matched
-                      else throw error
-                    }
-                  })
-              }))
-            )
-        ),
-        Effect.catchTags({
-          // Using the upgrade transaction which is already opened for us.
-          "IDBDatabaseTransactionOpenError": Effect.die
-        })
-      )
-      return yield* Effect.provideService(storeUpgradeService, LazyTransactionRegistry, {
-        // Mock registry service for upgrade transactions
-        registerStore: (_) => baseService.objectStoreNames.pipe(Effect.map((stores) => new Set(stores))),
-        storeNames: baseService.objectStoreNames, // empty set of stores for upgrade transactions
-        acquireTransaction: () => Effect.succeed(upgradeTxn), // use the upgrade transaction
-        acquireObjectStore: (storeName) => safeAcquireIDBObjectStore(upgradeTxn, storeName),
-        setPermissions: () => Effect.void // upgrade transactions are always readwrite
-      })
-    })
     const upsertObjectStore = Effect.fn(
       function*(
         configStore: IDBObjectStoreConfig | { Config: IDBObjectStoreConfig }
@@ -156,25 +145,18 @@ const createUpgradeService = Effect.fn(
         const storeConfig = "Config" in configStore ? configStore.Config : configStore
         // check if store already exists & perform any index migrations if so
         if (db.objectStoreNames.contains(storeConfig.name)) {
-          const storeUpgradeService = yield* getObjectStoreUpgradeService(storeConfig.name).pipe(
-            // getting the objectstore from the upgrade transaction should never fail here.
-            Effect.orDie
-          )
+          // getting the objectstore from the upgrade transaction should never fail here.
+          const storeUpgradeService = yield* Effect.orDie(makeUpgradeObjectStoreService(storeConfig.name, upgradeTxn))
           const existingIndexNames = Array.from(
-            yield* storeUpgradeService.indexNames.pipe(
-              // upgrade transaction is already open & object store exists, so this should also never fail
-              Effect.orDie
-            )
+            // upgrade transaction is already open & object store exists, so this should also never fail
+            yield* Effect.orDie(storeUpgradeService.indexNames)
           )
           yield* Effect.forEach(
             storeConfig.indexes,
             Effect.fn(function*(incoming) {
               // on existing indexes, check if options match & remake any indexes that differ
               if (existingIndexNames.includes(incoming.name)) {
-                const existing = yield* storeUpgradeService.index(incoming.name).pipe(
-                  // Accessing index should'nt error since were in an upgrade txn and already checked the store & index exists.
-                  Effect.orDie
-                )
+                const existing = yield* Effect.orDie(storeUpgradeService.index(incoming.name))
                 if (
                   !keyPathsMatch(incoming.keyPath, existing.keyPath) ||
                   (incoming.options && existing.unique !== incoming.options.unique) ||
@@ -249,12 +231,12 @@ const createUpgradeService = Effect.fn(
       }
     )
     return {
-      ...baseService,
+      ...yield* createBaseService(db),
       createObjectStore,
       deleteObjectStore,
       /** Effect handle to the "versionchange" IDBTransaction */
       useTransaction: <A, E, R>(cb: (txn: IDBTransaction) => Effect.Effect<A, E, R>) => cb(upgradeTxn),
-      objectStore: getObjectStoreUpgradeService,
+      objectStore: (storeName: string) => makeUpgradeObjectStoreService(storeName, upgradeTxn),
       /** Automatically generate defined object stores and their indexes. Destructively validates index configurations. */
       autoGenerateObjectStores: Effect.forEach(config.autoObjectStores ?? [], upsertObjectStore)
     }

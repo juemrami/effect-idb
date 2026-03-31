@@ -460,4 +460,26 @@ describe("Database Upgrade Service", () => {
     expect((result as IDBDatabaseTransactionOpenError).cause.name).toBe("NotFoundError")
     runtime.dispose()
   })
+
+  it("should correctly represent current objectstore names", async () => {
+    const runtime = createDatabaseTestRuntime({
+      name: "objectStoreContextTestDB",
+      version: 1,
+      autoObjectStores: [],
+      onUpgradeNeeded: (upgradeService) => ({
+        // If all you're doing is the auto migration for a version, it can be omitted here
+        // the default behavior is to fallback to autoGenerateObjectStores
+        // 1: upgradeService.autoGenerateObjectStores,
+        1: Effect.gen(function*() {
+          const stores1 = yield* upgradeService.objectStoreNames
+          yield* upgradeService.createObjectStore("StoreA") // incase new object stores/indexes are added
+          const stores2 = yield* upgradeService.objectStoreNames
+          expect(stores1).toEqual([])
+          expect(stores2).toEqual(["StoreA"])
+          return true
+        })
+      })
+    })
+    await runtime.runPromise(Effect.void)
+  })
 })
