@@ -232,11 +232,16 @@ const createUpgradeService = Effect.fn(
     )
     return {
       ...yield* createBaseService(db),
+      /** Creates an object store and any defined indexes on the idb database*/
       createObjectStore,
+      /** Deletes an object store and any indexes from the idb database */
       deleteObjectStore,
-      /** Effect handle to the "versionchange" IDBTransaction */
-      useTransaction: <A, E, R>(cb: (txn: IDBTransaction) => Effect.Effect<A, E, R>) => cb(upgradeTxn),
-      objectStore: (storeName: string) => makeUpgradeObjectStoreService(storeName, upgradeTxn),
+      transaction: {
+        /** Access to raw handle for the "versionchange" IDBTransaction */
+        use: <A, E, R>(cb: (txn: IDBTransaction) => Effect.Effect<A, E, R>) => cb(upgradeTxn),
+        /** IDBObjectStoreService extended with `createIndex` and `deleteIndex` methods */
+        objectStore: (storeName: string) => makeUpgradeObjectStoreService(storeName, upgradeTxn)
+      } as const,
       /** Automatically generate defined object stores and their indexes. Destructively validates index configurations. */
       autoGenerateObjectStores: Effect.forEach(config.autoObjectStores ?? [], upsertObjectStore)
     }
