@@ -14,5 +14,10 @@
 			"**/.jj": true
 		},
     "hide-files.files": [],
-    "git.enabled": false,
+		"git.enabled": false,
+		"cSpell.words": [
+			"effectify",
+			"idbtransaction",
+			"indexeddb"
+		],
 }

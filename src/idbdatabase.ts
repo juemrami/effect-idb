@@ -17,8 +17,8 @@ import {
   type IDBObjectStoreIndexParams,
   makeObjectStoreProxyService
 } from "./idbobjectstore.js"
+import { LazyTransactionRegistry, safeAcquireIDBObjectStore } from "./idbtransaction-internal.js"
 import type { IDBTransactionParams } from "./idbtransaction.js"
-import { getRawObjectStoreFromRawTransactionEffect, TransactionRegistryService } from "./idbtransaction.js"
 
 const CONTEXT_PREFIX = "/src/idbdatabase:"
 
@@ -106,8 +106,8 @@ const createUpgradeService = Effect.fn(
     }
     const getObjectStoreUpgradeService = Effect.fn(function*(storeName) {
       const storeUpgradeService = pipe(
-        Effect.service(TransactionRegistryService),
-        Effect.andThen((tx) => tx.useObjectStore(storeName)),
+        Effect.service(LazyTransactionRegistry),
+        Effect.andThen((tx) => tx.acquireObjectStore(storeName)),
         Effect.andThen(
           (rawStore) =>
             pipe(
@@ -140,12 +140,12 @@ const createUpgradeService = Effect.fn(
           "IDBDatabaseTransactionOpenError": Effect.die
         })
       )
-      return yield* Effect.provideService(storeUpgradeService, TransactionRegistryService, {
+      return yield* Effect.provideService(storeUpgradeService, LazyTransactionRegistry, {
         // Mock registry service for upgrade transactions
-        addStore: (_) => baseService.objectStoreNames.pipe(Effect.map((stores) => new Set(stores))),
+        registerStore: (_) => baseService.objectStoreNames.pipe(Effect.map((stores) => new Set(stores))),
         storeNames: baseService.objectStoreNames, // empty set of stores for upgrade transactions
-        makeTransaction: () => Effect.succeed(upgradeTxn), // use the upgrade transaction
-        useObjectStore: (storeName) => getRawObjectStoreFromRawTransactionEffect(upgradeTxn, storeName),
+        acquireTransaction: () => Effect.succeed(upgradeTxn), // use the upgrade transaction
+        acquireObjectStore: (storeName) => safeAcquireIDBObjectStore(upgradeTxn, storeName),
         setPermissions: () => Effect.void // upgrade transactions are always readwrite
       })
     })

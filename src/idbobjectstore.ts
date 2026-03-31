@@ -4,7 +4,8 @@ import * as ServiceMap from "effect/ServiceMap"
 
 import { pipe } from "effect/Function"
 import { IDBIndexOperationErrorMap, IDBObjectStoreOperationErrorMap } from "./errors.js"
-import { IDBTransactionService, TransactionRegistryService } from "./idbtransaction.js"
+import { LazyTransactionRegistry } from "./idbtransaction-internal.js"
+import { IDBTransactionService } from "./idbtransaction.js"
 
 const CONTEXT_PREFIX = "/src/idbobjectstore:"
 
@@ -175,10 +176,10 @@ export const makeObjectStoreProxyService = <
   storeName: string
 ) =>
   Effect.gen(function*() {
-    const registry = yield* TransactionRegistryService
-    yield* registry.addStore(storeName)
+    const registry = yield* LazyTransactionRegistry
+    yield* registry.registerStore(storeName)
     const useStorePropertyEffect = Effect.fn(function*<const P extends keyof IDBObjectStore>(property: P) {
-      const store = yield* registry.useObjectStore(storeName)
+      const store = yield* registry.acquireObjectStore(storeName)
       return store[property] as IDBObjectStore[P]
     })
     return {
@@ -193,39 +194,39 @@ export const makeObjectStoreProxyService = <
       indexNames: useStorePropertyEffect("indexNames").pipe(Effect.map(Array.from<string>)),
       add: <U = StoreShape>(value: U, key?: IDBValidKey) =>
         Effect.gen(function*() {
-          const store = yield* registry.useObjectStore(storeName)
+          const store = yield* registry.acquireObjectStore(storeName)
           const request = useRawStoreRequest(store.add.bind(store, value, key), "add")
           return yield* request
         }),
       clear: () =>
         Effect.gen(function*() {
-          const store = yield* registry.useObjectStore(storeName)
+          const store = yield* registry.acquireObjectStore(storeName)
           return yield* useRawStoreRequest(store.clear.bind(store), "clear")
         }),
       put: <U = StoreShape>(value: U, key?: IDBValidKey) =>
         Effect.gen(function*() {
-          const store = yield* registry.useObjectStore(storeName)
+          const store = yield* registry.acquireObjectStore(storeName)
           return yield* useRawStoreRequest(store.put.bind(store, value, key), "put")
         }),
       get: <U = StoreShape>(key: IDBValidKey) =>
         Effect.gen(function*() {
-          const store = yield* registry.useObjectStore(storeName)
+          const store = yield* registry.acquireObjectStore(storeName)
           return yield* useRawStoreRequest<U | undefined, "get">(store.get.bind(store, key), "get")
         }),
       getAll: <U = StoreShape>(query?: IDBKeyRange, count?: number) =>
         Effect.gen(function*() {
-          const store = yield* registry.useObjectStore(storeName)
+          const store = yield* registry.acquireObjectStore(storeName)
           return yield* useRawStoreRequest<Array<U>, "getAll">(store.getAll.bind(store, query, count), "getAll")
         }),
       delete: (key: IDBValidKey | IDBKeyRange) =>
         Effect.gen(function*() {
-          const store = yield* registry.useObjectStore(storeName)
+          const store = yield* registry.acquireObjectStore(storeName)
           return yield* useRawStoreRequest(store.delete.bind(store, key), "delete")
           // .pipe(Effect.andThen(() => true)) // Convert void result to boolean
         }),
       index: (indexName: IdxFromConfig<Config>) =>
         Effect.gen(function*() {
-          const store = yield* registry.useObjectStore(storeName)
+          const store = yield* registry.acquireObjectStore(storeName)
           const indexService = yield* makeIndexServiceEffect<StoreShape>(store, indexName)
           return indexService
         })
