@@ -1,3 +1,4 @@
+import { Match } from "effect"
 import type { Cause } from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
@@ -223,6 +224,7 @@ const createUpgradeService = Effect.fn(
     }
   }
 )
+
 export type IDBDatabaseConfig = {
   /** The name of the database */
   name: string
@@ -243,7 +245,9 @@ export type IDBDatabaseConfig = {
    * unless explicitly defined during the upgrade process. */
   onUpgradeNeeded?: (
     upgradeService: Effect.Success<ReturnType<typeof createUpgradeService>>
-  ) => Record<number, Effect.Effect<any, any, never>>
+  ) =>
+    | Record<number, Effect.Effect<any, any | never>>
+    | Effect.Effect<Record<number, Effect.Effect<any, any | never>>>
 }
 export class IDBDatabaseService extends ServiceMap.Service<IDBDatabaseService>()(`${CONTEXT_PREFIX}DatabaseService`, {
   make: Effect.fn(function*(db: IDBDatabase) {
@@ -324,33 +328,28 @@ class IDBFactoryService extends ServiceMap.Service<IDBFactoryService>()(`${CONTE
             migrationStartVersion: number,
             migrationEndVersion: number
           ) =>
-            pipe(
-              createUpgradeService(rawDatabase, config, rawUpgradeTxn),
-              Effect.map((upgradeService) => {
-                const definedVersionMigrations = config.onUpgradeNeeded ? config.onUpgradeNeeded(upgradeService) : {}
-                const orderedMigrations = []
+            Effect.gen(function*() {
+              const upgradeService = yield* createUpgradeService(rawDatabase, config, rawUpgradeTxn)
+              const definedVersionMigrations = yield* pipe(
+                config.onUpgradeNeeded ? config.onUpgradeNeeded(upgradeService) : {},
+                (migrationConfig) =>
+                  Match.type<typeof migrationConfig>().pipe(
+                    Match.when(Effect.isEffect, (effect) => effect),
+                    Match.orElse((record) => Effect.succeed(record))
+                  )(migrationConfig)
+              )
+              return yield* Effect.gen(function*() {
                 for (let version = migrationStartVersion; version <= migrationEndVersion; version++) {
-                  if (definedVersionMigrations[version]) orderedMigrations.push(definedVersionMigrations[version])
-                  else if (config.autoObjectStores?.length) {
+                  if (definedVersionMigrations[version]) {
+                    yield* definedVersionMigrations[version]
+                  } else if (config.autoObjectStores?.length) {
                     // if no migration effect declared for this version, auto generate any objectStores in `autoObjectStores`.
                     // This is an opinion, standard api behavior would not create any object stores unless explicitly defined
-                    orderedMigrations.push(upgradeService.autoGenerateObjectStores)
+                    yield* upgradeService.autoGenerateObjectStores
                   }
                 }
-                return orderedMigrations as Array<
-                  Effect.Effect<
-                    any,
-                    Effect.Error<
-                      Effect.Success<
-                        ReturnType<typeof createUpgradeService>
-                      >["autoGenerateObjectStores"]
-                    >
-                  >
-                >
-              }),
-              // run the upgrade effect synchronously. _DO NOT_ run them concurrently
-              Effect.andThen((migrations) => Effect.all(migrations))
-            )
+              })
+            })
           // Register upgrade handler synchronously to avoid races with success/error
           type UpgradeFailCause = Cause<Effect.Error<ReturnType<typeof makeUpgradeEffect>>>
           let failCause: UpgradeFailCause | undefined = undefined
