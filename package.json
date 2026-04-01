@@ -21,6 +21,7 @@
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
     "README.md",
+		"CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
@@ -29,11 +30,13 @@
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
     "clean-build": "pnpm clean && pnpm build",
     "check": "tsc -b tsconfig.json",
-    "lint": "eslint \"**/{src,test,examples,scripts,dtslint}/**/*.{ts,mjs}\"",
+    "lint": "eslint \"./{src,test,examples,scripts}/**/*.{ts,mjs}\"",
     "lint-fix": "pnpm lint --fix",
     "test": "vitest",
     "coverage": "vitest --coverage",
-    "changeset": "changeset"
+    "changeset": "changeset",
+    "bump": "changeset pre enter beta && changeset version && changeset pre exit && node scripts/changeset-cleanup.ts",
+		"prepublishOnly": "pnpm check && pnpm lint && pnpm test run && pnpm clean-build"
   },
   "peerDependencies": {
     "effect": "4.0.0-beta.43"
