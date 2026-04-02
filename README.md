@@ -59,7 +59,7 @@ class ContactObjectStore extends TaggedIDBObjectStoreService<ContactObjectStore,
 ) {}
 
 // Create a database connection layer
-const AppDatabase = IDBDatabaseService.makeLive({
+const AppDatabase = IDBDatabaseService.layerBrowser({
   name: "app-database",
   version: 1,
   autoObjectStores: [ContactObjectStore]
@@ -115,7 +115,7 @@ _`autoObjectStores` is a helper that automatically handles creating and managing
 import { IDBDatabaseService } from "effect-indexeddb";
 import type { IDBObjectStoreConfig } from "effect-indexeddb";
 
-const MyDatabaseLayer = IDBDatabaseService.makeLive({
+const MyDatabaseLayer = IDBDatabaseService.layerBrowser({
   name: "my-database",
   version: 1,
   autoObjectStores: [
@@ -234,12 +234,12 @@ class ContactObjectStore extends TaggedIDBObjectStoreService<ContactObjectStore,
 ```
 The `TaggedIDBObjectStoreService` class provides a couple of default layers and properties for convenience:
 - `Config`: alias to the configuration object passed to `storeConfig` in the constructor.
-- `Default`: A layer that provides the object store service with no underlying transaction service.
+- `layerNoTransaction`: A layer that provides the object store service with no underlying transaction service.
 - `WithReadOnly`: A layer that provides the object store service with a provided read-only transaction service.
 - `WithReadWrite`: A layer that provides the object store service with a provided read-write transaction service.
 
 ```typescript
-const AppDatabase = IDBDatabaseService.makeLive({
+const AppDatabase = IDBDatabaseService.layerBrowser({
   name: "app-database",
   version: 1,
   // Auto object stores will have any added or removed indexes automatically managed across versions.
@@ -267,43 +267,45 @@ const result = Effect.runPromiseExit(
 ```
 
 
-### Using `IDBObjectStoreService` + `Effect.Context`
+### Using `IDBObjectStoreService` + `ServiceMap.Service`
 
 The `IDBObjectStoreService` is a base service that provides a generic interface for interacting with an IndexedDB object store. It allows you to perform CRUD operations on the object store, and can be extended or used directly. This is the same service that the `TaggedIDBObjectStoreService` uses under the hood.
+
+> `TaggedIDBObjectStoreService` is just a helper that does this for you:
 
 ```typescript
 import { IDBObjectStoreService } from "effect-indexeddb";
 import type { IDBObjectStoreConfig } from "effect-indexeddb";
 
-const makeServiceEffect = Effect.gen(function* () {
-  const baseService = yield* IDBObjectStoreService
-  return baseService;
-});
+class UserObjectStore extends ServiceMap.Service<UserObjectStore>()(
+	"UserObjectStore",
+	{
+		make: Effect.gen(function* () {
+			const baseService = yield* IDBObjectStoreService
+			return baseService;
+		})
+	}
+){
+	static readonly Config: IDBObjectStoreConfig = {
+		name: "users",
+		params: { keyPath: "id", autoIncrement: true },
+		indexes: [
+			{ name: "by_email", keyPath: "email", options: { unique: true } },
+			{ name: "by_name", keyPath: "name" }
+		]
+	};
 
-class UserObjectStore extends Context.Tagged("UserObjectStore")<
-UserObjectStore,
-Effect.Success<typeof makeServiceEffect>,
->(){
-  static readonly Config: IDBObjectStoreConfig = {
-  name: "users",
-  params: { keyPath: "id", autoIncrement: true },
-  indexes: [
-    { name: "by_email", keyPath: "email", options: { unique: true } },
-    { name: "by_name", keyPath: "name" }
-  ]
-};
-
-  static readonly Default = Layer.effect(UserObjectStore, makeServiceEffect).pipe(
+  static readonly layerNoTransaction = Layer.effect(this, this.make).pipe(
     Layer.provide(IDBObjectStoreService.make(this.Config.name))
   );
 
   static readonly WithReadOnly = Layer.provide(
-    this.Default,
+    this.layerNoTransaction,
     IDBTransactionService.ReadOnly
   );
 
   static readonly WithReadWrite = Layer.provide(
-    this.Default,
+    this.layerNoTransaction,
     IDBTransactionService.ReadWrite
   );
 }
@@ -316,26 +318,6 @@ Effect.Success<typeof makeServiceEffect>,
   - todo: object store index name auto-completion
 - 📊 Effect Schema support
 - 🎯 IDBCursor support
-
-## Development
-
-```bash
-# Install dependencies
-pnpm install
-
-# Run tests
-pnpm test
-
-# Build the project
-pnpm build
-
-# Lint code
-pnpm lint
-
-# Run code
-pnpm tsx ./path/to/script.ts
-
-```
 
 ## License
 

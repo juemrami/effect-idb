@@ -1,6 +1,6 @@
 {
   "name": "effect-indexeddb",
-  "version": "1.0.0-beta.3",
+  "version": "1.0.0-beta.4",
   "type": "module",
   "packageManager": "pnpm@10.11.1",
   "license": "MIT",
@@ -21,7 +21,7 @@
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
     "README.md",
-		"CHANGELOG.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
@@ -36,7 +36,7 @@
     "coverage": "vitest --coverage",
     "changeset": "changeset",
     "bump": "changeset pre enter beta && changeset version && changeset pre exit && node scripts/changeset-cleanup.ts",
-		"prepublishOnly": "pnpm check && pnpm lint && pnpm test run && pnpm clean-build"
+    "prepublishOnly": "pnpm check && pnpm lint && pnpm test run && pnpm clean-build"
   },
   "peerDependencies": {
     "effect": "4.0.0-beta.43"
